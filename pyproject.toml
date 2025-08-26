@@ -1,0 +1,58 @@
+
+# ============================================================================
+# pyproject.toml (alternative to setup.py)
+# ============================================================================
+
+"""
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chembl-curator"
+version = "0.1.0"
+description = "A Python package for curating ChEMBL bioactivity data"
+readme = "README.md"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research", 
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9", 
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "rdkit>=2023.3.2",
+    "pandas>=1.5.0",
+    "numpy>=1.24.0", 
+    "requests>=2.28.0",
+    "tqdm>=4.64.0",
+    "click>=8.1.0",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/username/chembl-curator"
+Repository = "https://github.com/username/chembl-curator.git"
+Issues = "https://github.com/username/chembl-curator/issues"
+
+[project.scripts]
+chembl-curator = "chembl_curator.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["chembl_curator*"]
+
+[tool.setuptools.package-data]
+chembl_curator = ["data/*.txt", "config/*.yaml"]
+"""
