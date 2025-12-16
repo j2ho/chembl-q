@@ -617,10 +617,9 @@ ChEMBL-Q/
 
 ## External DB/Tools Used 
 
-- **ChEMBL**: Mendez D, et al. (2019) Nucleic Acids Res. 47(D1):D930-D940
-- **UniProt**: The UniProt Consortium (2023) Nucleic Acids Res. 51(D1):D523-D531
-- **AlphaFold**: Jumper J, et al. (2021) Nature 596:583-589
-- **TMalign**: Zhang Y, Skolnick J (2005) Nucleic Acids Res. 33:2302-2309
+- **ChEMBL** 
+- **AlphaFold DB**
+- **TMalign**
 
 ## License
 
