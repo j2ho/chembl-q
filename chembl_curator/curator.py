@@ -1,9 +1,4 @@
-
-# ============================================================================
 # chembl_curator/curator.py
-# ============================================================================
-
-"""Main curation pipeline for ChEMBL data."""
 
 import sqlite3
 import logging
@@ -19,7 +14,6 @@ from .utils import setup_logging
 
 @dataclass
 class CurationResults:
-    """Results from curation pipeline."""
     total_activities: int
     filtered_activities: int
     total_proteins: int
@@ -27,19 +21,16 @@ class CurationResults:
     output_directory: Path
 
 
-class ChEMBLCurator:
-    """Main class for ChEMBL bioactivity data curation."""
-    
+class ChEMBLCurator:    
     def __init__(
         self, 
         config: Optional[CurationConfig] = None,
         log_level: str = "INFO"
     ):
-        """Initialize ChEMBL Curator.
-        
+        """
         Args:
-            config: Configuration for curation parameters
-            log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+            config: Curation configs like activity thresholds
+            log_level: DEBUG, INFO, WARNING, ERROR for logger
         """
         self.config = config or CurationConfig()
         self.logger = setup_logging(log_level)
@@ -52,8 +43,7 @@ class ChEMBLCurator:
         output_dir: Optional[Path] = None,
         force_download: bool = False
     ) -> Path:
-        """Download ChEMBL SQLite database.
-        
+        """
         Args:
             output_dir: Directory to save database
             force_download: Force re-download even if exists
@@ -71,8 +61,7 @@ class ChEMBLCurator:
         database_path: Optional[Path] = None,
         output_dir: Path = Path("./curated_chembl")
     ) -> CurationResults:
-        """Run complete curation pipeline.
-        
+        """
         Args:
             database_path: Path to ChEMBL SQLite database
             output_dir: Output directory for curated data
@@ -80,25 +69,21 @@ class ChEMBLCurator:
         Returns:
             CurationResults with statistics
         """
-        self.logger.info("Starting ChEMBL curation pipeline")
+        self.logger.info("Start curation for ChEMBL database")
         
         # Download database if not provided
         if database_path is None:
             database_path = self.download_database()
             
-        # Connect to database
         conn = sqlite3.connect(database_path)
         
         try:
-            # Extract bioactivity data
             activities = self._extract_activities(conn)
             self.logger.info(f"Extracted {len(activities)} activity records")
             
-            # Get mappings
             chembl_to_uniprot = self._get_uniprot_mapping(conn)
             chembl_to_smiles = self._get_smiles_mapping(conn)
             
-            # Filter and organize
             results = self._process_activities(
                 activities, 
                 chembl_to_uniprot, 
@@ -106,16 +91,53 @@ class ChEMBLCurator:
                 output_dir
             )
             
-            self.logger.info(f"Curation completed: {results.total_compounds} compounds for {results.total_proteins} proteins")
+            self.logger.info(f"Curation completed: {results.total_compounds} actives for {results.total_proteins} targets")
             return results
             
         finally:
             conn.close()
     
     def _extract_activities(self, conn: sqlite3.Connection) -> List[Tuple]:
-        """Extract bioactivity data from database."""
-        query = """
-        SELECT 
+        target_types = ','.join(f"'{t}'" for t in self.config.target_types)
+        activity_types = ','.join(f"'{t}'" for t in self.config.activity_types)
+        relations = ','.join(f"'{r}'" for r in self.config.relations)
+        units = ','.join(f"'{u}'" for u in self.config.units)
+
+        # Build validity filter conditions
+        validity_conditions = []
+
+        if self.config.require_standard_flag:
+            validity_conditions.append("a.standard_flag = 1")
+
+        if self.config.exclude_invalid_data:
+            validity_conditions.append("a.data_validity_comment IS NULL")
+
+        if self.config.exclude_duplicates:
+            validity_conditions.append("(a.potential_duplicate IS NULL OR a.potential_duplicate = 0)")
+
+        # Add assay quality filters
+        if self.config.min_confidence_score is not None:
+            validity_conditions.append(f"ass.confidence_score >= {self.config.min_confidence_score}")
+
+        if self.config.assay_types is not None:
+            assay_type_list = ','.join(f"'{t}'" for t in self.config.assay_types)
+            validity_conditions.append(f"ass.assay_type IN ({assay_type_list})")
+
+        if self.config.bao_formats is not None:
+            bao_format_list = ','.join(f"'{b}'" for b in self.config.bao_formats)
+            validity_conditions.append(f"ass.bao_format IN ({bao_format_list})")
+
+        # Add pChEMBL filter
+        if self.config.min_pchembl_value is not None:
+            validity_conditions.append(f"a.pchembl_value >= {self.config.min_pchembl_value}")
+
+        # Combine validity conditions
+        validity_filter = ""
+        if validity_conditions:
+            validity_filter = "AND " + " AND ".join(validity_conditions)
+
+        query = f"""
+        SELECT
             td.chembl_id AS target_chembl_id,
             md.chembl_id AS compound_chembl_id,
             a.standard_type,
@@ -126,18 +148,20 @@ class ChEMBLCurator:
         JOIN molecule_dictionary md ON a.molregno = md.molregno
         JOIN assays ass ON a.assay_id = ass.assay_id
         JOIN target_dictionary td ON ass.tid = td.tid
-        WHERE 
-            td.target_type = 'SINGLE PROTEIN'
-            AND a.standard_type IN ('Kd', 'Ki', 'IC50', 'EC50')
-            AND a.standard_relation IN ('=', '<=')
-            AND a.standard_units IN ('nM', 'uM')
+        WHERE
+            td.target_type IN ({target_types})
+            AND a.standard_type IN ({activity_types})
+            AND a.standard_relation IN ({relations})
+            AND a.standard_units IN ({units})
             AND a.standard_value IS NOT NULL
+            {validity_filter}
         """
         return conn.execute(query).fetchall()
     
     def _get_uniprot_mapping(self, conn: sqlite3.Connection) -> Dict[str, str]:
-        """Get ChEMBL to UniProt mapping."""
-        query = """
+        target_types = ','.join(f"'{t}'" for t in self.config.target_types)
+        
+        query = f"""
         SELECT DISTINCT 
             td.chembl_id AS target_chembl_id,
             cs.accession AS uniprot_id
@@ -145,15 +169,13 @@ class ChEMBLCurator:
         JOIN target_components tc ON td.tid = tc.tid
         JOIN component_sequences cs ON tc.component_id = cs.component_id
         WHERE 
-            td.target_type = 'SINGLE PROTEIN'
+            td.target_type IN ({target_types})
             AND cs.accession IS NOT NULL
-            AND (cs.accession LIKE 'P%' OR cs.accession LIKE 'Q%' OR cs.accession LIKE 'O%')
         """
         results = conn.execute(query).fetchall()
         return {chembl_id: uniprot_id for chembl_id, uniprot_id in results}
     
     def _get_smiles_mapping(self, conn: sqlite3.Connection) -> Dict[str, str]:
-        """Get compound SMILES mapping."""
         query = """
         SELECT 
             md.chembl_id,
@@ -172,7 +194,6 @@ class ChEMBLCurator:
         chembl_to_smiles: Dict[str, str],
         output_dir: Path
     ) -> CurationResults:
-        """Process and filter activities."""
         output_dir = Path(output_dir)
         output_dir.mkdir(exist_ok=True, parents=True)
         
@@ -182,31 +203,25 @@ class ChEMBLCurator:
         for activity in activities:
             target_chembl, compound_chembl, std_type, std_relation, std_value, std_units = activity
             
-            # Apply activity filter
             if not self.activity_filter.is_active(std_value, std_units):
                 continue
                 
-            # Map to UniProt
             if target_chembl not in chembl_to_uniprot:
                 continue
             uniprot_id = chembl_to_uniprot[target_chembl]
             
-            # Get SMILES
             if compound_chembl not in chembl_to_smiles:
                 continue
             smiles = chembl_to_smiles[compound_chembl]
             
-            # Apply compound filters
-            if not self.compound_filter.passes_filters(smiles):
+            if not self.compound_filter.is_valid(smiles):
                 continue
             
-            # Store compound
             if uniprot_id not in protein_compounds:
                 protein_compounds[uniprot_id] = set()
             protein_compounds[uniprot_id].add((compound_chembl, smiles))
             filtered_count += 1
         
-        # Write output files
         total_compounds = self._write_output_files(protein_compounds, output_dir)
         
         return CurationResults(
@@ -222,11 +237,10 @@ class ChEMBLCurator:
         protein_compounds: Dict[str, set], 
         output_dir: Path
     ) -> int:
-        """Write compound files organized by protein."""
         total_compounds = 0
         
         for uniprot_id, compounds in protein_compounds.items():
-            prot_dir = output_dir / uniprot_id / "comps"
+            prot_dir = output_dir / uniprot_id / "comps" / "smiles"
             prot_dir.mkdir(parents=True, exist_ok=True)
             
             for compound_id, smiles in compounds:
