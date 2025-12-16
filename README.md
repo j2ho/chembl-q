@@ -33,7 +33,7 @@ ChEMBL Curator provides a two-stage pipeline:
 
 - Python 3.8+
 - External tools (for protein filtering):
-  - `pdb_get`: PDB download tool
+  - `pdb_get`: PDB download tool (optional - will fallback to RCSB web download)
   - `TMalign`: Structure alignment tool (expected at `./bin/TMalign`)
   - `wget`: For downloading AlphaFold models
 
@@ -51,14 +51,20 @@ pip install click requests numpy rdkit pandas
 
 ```bash
 # Check if tools are available
-which pdb_get
-which wget
-ls ./bin/TMalign
+which wget  # Required for AlphaFold downloads
+ls ./bin/TMalign  # Required for structure alignment
 
-# If TMalign is in a different location, update protein_filter.py or create symlink
+# Optional: Check if pdb_get is available (faster, but will fallback to web download)
+which pdb_get
+
+# If TMalign is in a different location, create symlink
 mkdir -p ./bin
 ln -s /path/to/TMalign ./bin/TMalign
 ```
+
+**Note:** PDB download automatically uses:
+1. `pdb_get` if available (faster, requires local PDB database)
+2. RCSB web download as fallback (works anywhere with internet)
 
 ## Quick Start
 
@@ -369,7 +375,8 @@ The protein filtering stage consists of 7 steps:
 - Retrieves PDB ID, method, resolution, chain information
 
 ### 2. Download PDB Structures
-- Uses `pdb_get` command
+- Tries `pdb_get` first (if available, faster with local database)
+- Falls back to RCSB web download (https://files.rcsb.org)
 - Creates `pdb/` directory
 
 ### 3. Download AlphaFold Models
@@ -525,13 +532,16 @@ print(pocket_df)
 
 ### Common Issues
 
-**1. pdb_get not found**
+**1. PDB download issues**
 ```bash
-# Check if installed
+# pdb_get is now optional - the pipeline automatically falls back to RCSB web download
+# If you want faster downloads and have access to a local PDB database:
 which pdb_get
 
-# If not, install or add to PATH
+# If pdb_get is not found but you have it installed:
 export PATH=/path/to/pdb_tools:$PATH
+
+# Otherwise, web download from RCSB will be used automatically (requires internet)
 ```
 
 **2. TMalign not found**

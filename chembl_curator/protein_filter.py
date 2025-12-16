@@ -1,6 +1,7 @@
 # chembl_curator/protein_filter.py
 
 import os
+import shutil
 import subprocess
 import logging
 from pathlib import Path
@@ -152,7 +153,7 @@ class ProteinFilter:
 
     def download_pdb(self, pdb_id: str, output_dir: Path) -> bool:
         """
-        Download PDB file using pdb_get command.
+        Download PDB file using pdb_get command (if available) or RCSB web download.
 
         Args:
             pdb_id: PDB ID to download
@@ -161,25 +162,48 @@ class ProteinFilter:
         Returns:
             True if successful, False otherwise
         """
+        pdb_file = output_dir / f"{pdb_id.lower()}.pdb"
+
+        # Method 1: Try pdb_get (fast if available on cluster)
+        if shutil.which('pdb_get'):
+            try:
+                result = subprocess.run(
+                    ['pdb_get', pdb_id],
+                    cwd=output_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+
+                # Check if PDB file was created
+                if pdb_file.exists():
+                    self.logger.debug(f"Downloaded {pdb_id} using pdb_get")
+                    return True
+
+                # pdb_get might create files with different naming
+                pdb_files = list(output_dir.glob(f"*{pdb_id.lower()}*"))
+                if pdb_files:
+                    # Rename to standard format
+                    pdb_files[0].rename(pdb_file)
+                    self.logger.debug(f"Downloaded {pdb_id} using pdb_get")
+                    return True
+
+            except Exception as e:
+                self.logger.debug(f"pdb_get failed for {pdb_id}: {e}, trying web download")
+
+        # Method 2: Download from RCSB PDB (fallback or if pdb_get not available)
         try:
-            result = subprocess.run(
-                ['pdb_get', pdb_id],
-                cwd=output_dir,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
+            url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
+            self.logger.debug(f"Downloading {pdb_id} from RCSB: {url}")
 
-            # Check if PDB file was created
-            pdb_file = output_dir / f"{pdb_id.lower()}.pdb"
-            if pdb_file.exists():
-                return True
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
 
-            # pdb_get might create files with different naming
-            pdb_files = list(output_dir.glob(f"*{pdb_id.lower()}*"))
-            if pdb_files:
-                # Rename to standard format
-                pdb_files[0].rename(pdb_file)
+            with open(pdb_file, 'w') as f:
+                f.write(response.text)
+
+            if pdb_file.exists() and pdb_file.stat().st_size > 0:
+                self.logger.debug(f"Downloaded {pdb_id} from RCSB")
                 return True
 
             return False
