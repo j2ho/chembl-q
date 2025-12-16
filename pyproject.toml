@@ -1,9 +1,4 @@
 
-# ============================================================================
-# pyproject.toml (alternative to setup.py)
-# ============================================================================
-
-"""
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -47,7 +42,7 @@ Repository = "https://github.com/username/chembl-curator.git"
 Issues = "https://github.com/username/chembl-curator/issues"
 
 [project.scripts]
-chembl-curator = "chembl_curator.cli:main"
+chembl-curator = "chembl_curator.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -55,4 +50,3 @@ include = ["chembl_curator*"]
 
 [tool.setuptools.package-data]
 chembl_curator = ["data/*.txt", "config/*.yaml"]
-"""

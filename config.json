@@ -1,0 +1,36 @@
+{
+  "activity_thresholds": {
+    "nM": 10000.0,
+    "uM": 10.0
+  },
+  "min_heavy_atoms": 5,
+  "max_heavy_atoms": 80,
+  "target_types": [
+    "SINGLE PROTEIN"
+  ],
+  "activity_types": [
+    "Kd",
+    "Ki",
+    "IC50",
+    "EC50"
+  ],
+  "relations": [
+    "=",
+    "<="
+  ],
+  "units": [
+    "nM",
+    "uM"
+  ],
+  "require_standard_flag": false,
+  "exclude_invalid_data": true,
+  "exclude_duplicates": true,
+  "min_confidence_score": 6,
+  "assay_types": [
+    "B"
+  ],
+  "bao_formats": [
+    "BAO_0000357"
+  ],
+  "min_pchembl_value": 5
+}
