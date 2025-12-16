@@ -615,9 +615,7 @@ ChEMBL-Q/
 - **PROTEIN_FILTERING.md**: Detailed protein filtering pipeline documentation
 - **example_scripts/**: Example usage scripts and reference implementations
 
-## Citation
-
-If you use ChEMBL Curator in your research, please cite:
+## External DB/Tools Used 
 
 - **ChEMBL**: Mendez D, et al. (2019) Nucleic Acids Res. 47(D1):D930-D940
 - **UniProt**: The UniProt Consortium (2023) Nucleic Acids Res. 51(D1):D523-D531
@@ -628,14 +626,3 @@ If you use ChEMBL Curator in your research, please cite:
 
 This project is provided as-is for research purposes.
 
-## Author
-
-Jiho Sim
-
-## Acknowledgments
-
-- ChEMBL database from EMBL-EBI
-- AlphaFold structures from DeepMind/EMBL-EBI
-- PDB structures from RCSB/PDBe
-- RDKit for cheminformatics
-- TMalign for structure alignment
