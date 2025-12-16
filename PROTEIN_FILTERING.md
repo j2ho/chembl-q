@@ -19,7 +19,8 @@ The protein filtering pipeline processes curated ChEMBL targets and filters them
 - Saves results to `pdbid.list` file in each target directory
 
 ### Step 2: Download PDB Structures
-- Downloads PDB files using `pdb_get` command
+- Tries `pdb_get` command first (if available, faster with local database)
+- Falls back to RCSB web download (https://files.rcsb.org/download/)
 - Creates `pdb/` directory under each target
 - Saves structures in standard PDB format
 
@@ -32,12 +33,14 @@ The protein filtering pipeline processes curated ChEMBL targets and filters them
 - Parses HETATM records from PDB files
 - Excludes non-biological ligands (water, ions, buffers, crystallization aids)
 - Checks if ligand has contact with protein (within 4Å of any heavy atom)
-- Identifies single-ligand or clustered-ligand structures (ligands within 10Å)
-- Saves list to `ligand_bound_pdbs.txt`
+- Detects chain-specific ligand contacts
+- Identifies single-ligand or clustered-ligand structures (ligands within 10Å per chain)
+- Saves list to `ligand_bound_pdbs.txt` with chain information
 
 ### Step 5: Align Structures
 - Aligns all ligand-bound structures to AlphaFold model using TMalign
-- Only saves the chain of interest from each structure
+- Creates separate aligned file for each chain ({pdbid}_{chain}.pdb)
+- Only saves the specific chain from each structure (with all its ligands)
 - Saves aligned structures to `aligned/` directory
 
 ### Step 6: Check Pocket Clustering
@@ -45,6 +48,8 @@ The protein filtering pipeline processes curated ChEMBL targets and filters them
 - Checks if all ligands are in the same pocket (centers within 10Å)
 - Saves pocket information to `pocket_info.csv` with columns:
   - PDB_ID
+  - Chain
+  - Aligned_File
   - Ligand_Name
   - Center_X, Center_Y, Center_Z
 
@@ -66,8 +71,8 @@ After running the protein filtering pipeline, each target directory will contain
 │   ├── AF-{UNIPROT_ID}.pdb  # AlphaFold model
 │   ├── {pdbid}.pdb          # Experimental structures
 │   └── ...
-├── aligned/                  # Aligned structures
-│   ├── {pdbid}_aligned.pdb
+├── aligned/                  # Aligned structures (per chain)
+│   ├── {pdbid}_{chain}.pdb
 │   └── ...
 ├── pdbid.list               # PDB information
 ├── ligand_bound_pdbs.txt    # Ligand-bound PDB IDs
@@ -119,8 +124,8 @@ python example_scripts/run_protein_filter.py \
 ## Requirements
 
 ### External Tools
-- `pdb_get`: PDB download tool (must be in PATH)
-- `TMalign`: Structure alignment tool (expected at `/applic/bin/TMalign`)
+- `pdb_get`: PDB download tool (optional - will fallback to RCSB web download)
+- `TMalign`: Structure alignment tool (expected at `./bin/TMalign`)
 - `wget`: For downloading AlphaFold models
 
 ### Python Dependencies
@@ -190,19 +195,21 @@ PDB information for each target:
 ```
 
 ### ligand_bound_pdbs.txt
-Ligand-bound PDB IDs:
+Ligand-bound PDB IDs with chain information:
 ```
-1ATP  ATP
-2ATP  ADP,MG
+1ATP  Chain A: ATP
+1ATP  Chain B: ATP
+2ATP  Chain A: ADP,MG
 ...
 ```
 
 ### pocket_info.csv
-Pocket clustering information:
+Pocket clustering information (from aligned structures):
 ```
-PDB_ID,Ligand_Name,Center_X,Center_Y,Center_Z
-1ATP,ATP,12.345,23.456,34.567
-2ATP,ADP,12.123,23.234,34.345
+PDB_ID,Chain,Aligned_File,Ligand_Name,Center_X,Center_Y,Center_Z
+1ATP,A,1atp_A.pdb,ATP,12.345,23.456,34.567
+1ATP,B,1atp_B.pdb,ATP,12.123,23.234,34.345
+2ATP,A,2atp_A.pdb,ADP,12.100,23.200,34.300
 ...
 ```
 
@@ -215,15 +222,24 @@ PDB_ID,Ligand_Name,Center_X,Center_Y,Center_Z
 ## Troubleshooting
 
 ### pdb_get not found
-Ensure `pdb_get` is installed and in your PATH:
+`pdb_get` is now optional - the pipeline automatically falls back to RCSB web download.
+
+If you want faster downloads and have access to a local PDB database:
 ```bash
 which pdb_get
+# If not in PATH:
+export PATH=/path/to/pdb_tools:$PATH
 ```
 
+Otherwise, web download from RCSB will be used automatically (requires internet).
+
 ### TMalign not found
-Update the TMalign path in `protein_filter.py` or create symlink:
+Create bin directory and symlink to TMalign:
 ```bash
-ln -s /path/to/TMalign /applic/bin/TMalign
+mkdir -p ./bin
+ln -s /path/to/TMalign ./bin/TMalign
+
+# Or update the path in protein_filter.py line 460
 ```
 
 ### wget not available
