@@ -1,7 +1,15 @@
-rdkit>=2023.3.2
-pandas>=1.5.0
+# Core dependencies
+rdkit>=2024.3.0
+pandas>=2.0.0
 numpy>=1.24.0
 requests>=2.28.0
 tqdm>=4.64.0
 click>=8.1.0
-pydantic>=2.0.0
+
+# nurikit provides the 'nuri' import (TMalign bindings, required for stage 5)
+# pip install nurikit  OR build from source: https://github.com/seoklab/nurikit
+nurikit>=0.1.0a16
+
+# External binaries (not pip-installable, install separately):
+#   MMseqs2  — https://github.com/soedinglab/MMseqs2  (required for stages 5, 7)
+#   TMalign  — https://zhanggroup.org/TM-align/        (required for stage 2)

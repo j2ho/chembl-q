@@ -1,627 +1,299 @@
-# ChEMBL Curator
+# ChEMBL-Q
 
-A comprehensive pipeline for curating ChEMBL database and filtering protein-ligand complexes based on activity data, compound properties, and structural quality.
+A pipeline for curating ChEMBL into a ready-to-use ML screening dataset: compound filtering, protein structure validation, active clustering, decoy selection, and train/test splitting by receptor similarity.
 
-## Overview
+## Pipeline Overview
 
-ChEMBL Curator provides a two-stage pipeline:
+| Stage | Command | Output |
+|-------|---------|--------|
+| 1. Compound filtering | `curate` | `{target}/actives.tsv`, `{target}/comps/smiles/*.smi` |
+| 2. Protein filtering | `filter-proteins` | `aligned/*.pdb`, `pocket_info.csv`, `sequences.fasta`, `best_structure.tsv` |
+| 3. Active clustering | `cluster-actives` | `{target}/actives_clustered.tsv` |
+| 4. Compound pool | `build-pool` | `compound_pool.pkl` |
+| 5. Receptor similarity | `receptor-sim` | `pairwise_seqid.tsv`, `pairwise_pocket_rmsd.tsv` |
+| 6. Decoy selection | `select-decoys` | `{target}/decoys.tsv` |
+| 7. Train/test split | `split` | `train.txt`, `test.txt` |
 
-1. **Compound Filtering Stage**: Extracts and filters ligands from ChEMBL database based on:
-   - Activity data (Ki, Kd, IC50, EC50)
-   - Activity thresholds and relations
-   - Compound validity (SMILES, molecular properties)
-   - Target types (single proteins)
+All outputs go under a single data directory (e.g. `curated_data_filtered/`).
 
-2. **Protein Filtering Stage**: Filters targets based on structural data:
-   - PDB structure availability
-   - AlphaFold model availability
-   - Ligand-bound structures
-   - Single binding site requirement
-
-## Features
-
-- **Flexible Configuration**: JSON-based configuration or command-line options
-- **Robust Filtering**: Multiple validity checks for activity data and compounds
-- **Structure-Based Filtering**: Automated PDB download, alignment, and pocket analysis
-- **Parallel Processing**: Support for multi-core processing
-- **Comprehensive Logging**: Detailed logging at multiple levels
-- **Error Handling**: Continues processing on errors, logs issues
+---
 
 ## Installation
 
-### Prerequisites
+### Conda environment (recommended)
 
-- Python 3.8+
-- External tools (for protein filtering):
-  - `pdb_get`: PDB download tool (optional - will fallback to RCSB web download)
-  - `TMalign`: Structure alignment tool (expected at `./bin/TMalign`)
-  - `wget`: For downloading AlphaFold models
-
-### Python Dependencies
+conda is the recommended approach — RDKit and nurikit are C++ extension packages that conda resolves cleanly.
 
 ```bash
-# Install the package
-pip install -e .
+conda create -n chemblq python=3.10
+conda activate chemblq
 
-# Or install dependencies manually
-pip install click requests numpy rdkit pandas
+# RDKit via conda-forge (simpler than pip for RDKit)
+conda install -c conda-forge rdkit
+
+# Remaining Python dependencies
+pip install -e .          # installs click, numpy, pandas, requests, tqdm, nurikit
 ```
 
-### External Tools Setup
+> **`nuri` vs `nurikit`**: the Python import is `import nuri` but the package name on PyPI is `nurikit`. The `pip install -e .` above handles this via the dependency in `pyproject.toml`.
+
+### External binaries
+
+These are not pip/conda packages and must be installed separately:
+
+| Tool | Required for | Install |
+|------|-------------|---------|
+| **TMalign** | Stage 2 (structure alignment) | [zhanggroup.org/TM-align](https://zhanggroup.org/TM-align/) — place at `./bin/TMalign` |
+| **MMseqs2** | Stages 5, 7 (sequence search/clustering) | [github.com/soedinglab/MMseqs2](https://github.com/soedinglab/MMseqs2) — must be in `PATH` |
+| `wget` | Stage 2 (AlphaFold download) | usually pre-installed |
+| `pdb_get` | Stage 2 (optional) | local PDB mirror; falls back to RCSB web download |
 
 ```bash
-# Check if tools are available
-which wget  # Required for AlphaFold downloads
-ls ./bin/TMalign  # Required for structure alignment
+# TMalign setup
+mkdir -p ./bin && ln -s /path/to/TMalign ./bin/TMalign
 
-# Optional: Check if pdb_get is available (faster, but will fallback to web download)
-which pdb_get
-
-# If TMalign is in a different location, create symlink
-mkdir -p ./bin
-ln -s /path/to/TMalign ./bin/TMalign
+# Verify MMseqs2 is in PATH
+mmseqs --help
 ```
 
-**Note:** PDB download automatically uses:
-1. `pdb_get` if available (faster, requires local PDB database)
-2. RCSB web download as fallback (works anywhere with internet)
+---
 
 ## Quick Start
 
-### Complete Pipeline (Compound + Protein Filtering)
-
 ```bash
-# Step 1: Compound filtering - creates curated_data_filtered/
-echo "Step 1: Running compound filtering..."
-chembl-curator curate --download --output curated_data_filtered --log-level INFO
+DATA=curated_data_filtered
 
-# Wait for completion, then:
+# Stage 1: curate compounds from ChEMBL
+chembl-curator curate --download --output $DATA
 
-# Step 2: Protein filtering - adds PDB structures and filters by binding site
-echo "Step 2: Running protein filtering..."
-chembl-curator filter-proteins \
-    --curated-dir curated_data_filtered \
-    --n-processes 8 \
-    --log-level INFO
+# Stage 2: validate protein structures and binding sites
+chembl-curator filter-proteins --curated-dir $DATA --n-processes 8
 
-# Step 3: Check results
-echo "Step 3: Checking results..."
-cat curated_data_filtered/passed_targets.txt
-echo "Total passed targets: $(wc -l < curated_data_filtered/passed_targets.txt)"
+# Stage 3: cluster actives per target (Butina, Tanimoto ≥ 0.7)
+chembl-curator cluster-actives --data-dir $DATA --workers 8
+
+# Stage 4: build global compound pool
+chembl-curator build-pool --data-dir $DATA
+
+# Stage 5: compute pairwise receptor similarity
+chembl-curator receptor-sim --data-dir $DATA --mode both --workers 8
+
+# Stage 6: select property-matched, receptor-aware decoys
+chembl-curator select-decoys --data-dir $DATA --max-decoys 30
+
+# Stage 7: train/test split by sequence identity clustering
+chembl-curator split --data-dir $DATA --valid-frac 0.1
 ```
 
-### Testing on Subset (Recommended First)
+---
 
-For testing, you might want to try on a small subset first:
+## Stage Reference
 
-```bash
-# Step 1: Create test directory with just a few targets
-mkdir -p test_curated
-cp -r curated_data_filtered/P28222 test_curated/
-cp -r curated_data_filtered/Q9Y6K9 test_curated/
-cp -r curated_data_filtered/P00533 test_curated/
+### Stage 1: `curate`
 
-# Step 2: Run protein filtering on test subset
-chembl-curator filter-proteins \
-    --curated-dir test_curated \
-    --n-processes 1 \
-    --log-level DEBUG
-
-# Step 3: Check if it worked
-ls -la test_curated/P28222/pdb/
-cat test_curated/passed_targets.txt
-```
-
-## Usage
-
-### Stage 1: Compound Filtering
-
-#### Using CLI
+Extracts and filters ligand–target pairs from ChEMBL.
 
 ```bash
-# Basic usage - download and curate with defaults
 chembl-curator curate --download --output curated_data_filtered
-
-# Using existing database
-chembl-curator curate --database /path/to/chembl_34.db --output curated_data_filtered
-
-# Using custom configuration file
-chembl-curator curate --download --config config.json --output curated_data_filtered
-
-# Override specific parameters
-chembl-curator curate --download --output curated_data_filtered \
-    --activity-types Ki Kd IC50 \
-    --relations "=" "<=" "<" \
-    --units nM
-
-# Create example config file
-chembl-curator curate --create-config config.json
-
-# With debug logging
-chembl-curator curate --download --output curated_data_filtered --log-level DEBUG
+chembl-curator curate --database /path/to/chembl.db --config config.json --output curated_data_filtered
+chembl-curator curate --create-config config.json   # generate example config
 ```
 
-#### Using Python API
+**Default filters:**
+- Activity types: Ki, Kd, IC50, EC50
+- Relations: `=`, `<=`
+- Units: nM, uM (≤ 10 µM)
+- pChEMBL ≥ 5.0, confidence score ≥ 6
+- Heavy atoms: 5–80, valid SMILES required
+- Binding assays only (`B`), single protein targets
 
-```python
-from chembl_curator import ChEMBLCurator, CurationConfig
-from pathlib import Path
-
-# Option 1: Using default configuration
-curator = ChEMBLCurator(log_level='INFO')
-results = curator.run_pipeline(
-    database_path=None,  # Will download ChEMBL
-    output_dir=Path('curated_data_filtered')
-)
-
-print(f"Total compounds: {results.total_compounds}")
-print(f"Total proteins: {results.total_proteins}")
-
-# Option 2: Using custom configuration
-config = CurationConfig(
-    activity_thresholds={'nM': 1000.0, 'uM': 1.0},
-    activity_types=['Ki', 'Kd', 'IC50'],
-    units=['nM'],
-    min_pchembl_value=6.0,
-    min_confidence_score=8
-)
-
-curator = ChEMBLCurator(config=config, log_level='INFO')
-results = curator.run_pipeline(
-    database_path=Path('chembl_34.db'),
-    output_dir=Path('curated_data_filtered')
-)
-```
-
-### Stage 2: Protein Filtering
-
-#### Using CLI
-
-```bash
-# Sequential processing (1 core)
-chembl-curator filter-proteins --curated-dir curated_data_filtered --n-processes 1
-
-# Parallel processing (8 cores, recommended)
-chembl-curator filter-proteins --curated-dir curated_data_filtered --n-processes 8
-
-# With debug logging
-chembl-curator filter-proteins --curated-dir curated_data_filtered --n-processes 8 --log-level DEBUG
-```
-
-#### Using Python API
-
-```python
-from chembl_curator import ProteinFilter
-from pathlib import Path
-
-# Create protein filter
-pf = ProteinFilter(
-    curated_dir=Path('curated_data_filtered'),
-    log_level='INFO'
-)
-
-# Run pipeline with parallel processing
-passed_targets = pf.run_pipeline(n_processes=8)
-
-print(f"Passed {len(passed_targets)} targets with single binding sites")
-
-# Process single target
-result = pf.process_target('P28222')
-print(f"Target P28222 passed: {result}")
-```
-
-#### Using Example Script
-
-```bash
-python example_scripts/run_protein_filter.py \
-    --curated-dir curated_data_filtered \
-    --n-processes 8 \
-    --log-level INFO
-```
-
-## Configuration
-
-### Default Configuration
-
-The default configuration filters for:
-
-**Activity Types:**
-- `Ki`, `Kd`, `IC50`, `EC50`
-
-**Relations:**
-- `=`, `<=`
-
-**Units:**
-- `nM` (nanomolar), `uM` (micromolar)
-
-**Activity Thresholds:**
-- ≤ 10000 nM (10 µM) for nM units
-- ≤ 10 µM for µM units
-
-**Target Types:**
-- `SINGLE PROTEIN` only
-
-**Compound Filters:**
-- Heavy atoms: 5-80
-- Valid SMILES required
-
-**Validity Filters:**
-- Standard flag: not required (false)
-- Exclude invalid data: true
-- Exclude duplicates: true
-- Minimum confidence score: ≥ 6
-- Minimum pChEMBL value: ≥ 5.0
-
-**Assay Types:**
-- `B` (Binding assays only)
-
-**BAO Formats:**
-- `BAO_0000357` (single protein format)
-
-### Custom Configuration File
-
-Create a JSON configuration file:
-
+**Configuration (JSON):**
 ```json
 {
-  "activity_thresholds": {
-    "nM": 1000.0,
-    "uM": 1.0
-  },
-  "min_heavy_atoms": 5,
-  "max_heavy_atoms": 50,
-  "target_types": ["SINGLE PROTEIN"],
+  "activity_thresholds": {"nM": 1000.0, "uM": 1.0},
   "activity_types": ["Ki", "Kd", "IC50"],
   "relations": ["=", "<="],
   "units": ["nM", "uM"],
-  "require_standard_flag": false,
-  "exclude_invalid_data": true,
-  "exclude_duplicates": true,
+  "min_pchembl_value": 6.0,
   "min_confidence_score": 8,
-  "assay_types": ["B", "F"],
-  "bao_formats": ["BAO_0000357"],
-  "min_pchembl_value": 6.0
+  "assay_types": ["B"]
 }
 ```
 
-Use with:
+---
+
+### Stage 2: `filter-proteins`
+
+Fetches PDB structures, downloads AlphaFold models, aligns structures, and keeps only targets with a single binding site.
+
 ```bash
-chembl-curator curate --config config.json --download --output curated_data_filtered
+chembl-curator filter-proteins --curated-dir curated_data_filtered --n-processes 8
 ```
+
+Steps: fetch UniProt PDB list → download PDB/AlphaFold → detect ligand-bound structures → align to AlphaFold (TMalign) → cluster pockets → filter single-site targets.
+
+Also writes `sequences.fasta` (canonical UniProt sequences) and `best_structure.tsv` (best-resolution ligand-bound structure per target) needed by later stages.
+
+---
+
+### Stage 3: `cluster-actives`
+
+Butina clustering of actives per target. Picks the highest-pChEMBL representative per cluster.
+
+```bash
+chembl-curator cluster-actives --data-dir curated_data_filtered --dist-thresh 0.3 --workers 8
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--dist-thresh` | 0.3 | Tanimoto distance threshold (0.3 → similarity ≥ 0.7) |
+| `--workers` | 1 | Parallel worker processes |
+
+---
+
+### Stage 4: `build-pool`
+
+Builds a global compound pool from all clustered actives. Deduplicates by ChEMBL ID, computes molecular properties and Morgan fingerprints.
+
+```bash
+chembl-curator build-pool --data-dir curated_data_filtered
+```
+
+Pool contains: MW, cLogP, TPSA, HBD, HBA, aromatic rings, 2048-bit Morgan FP (radius 2), target membership set.
+
+---
+
+### Stage 5: `receptor-sim`
+
+Computes pairwise receptor similarity via two independent methods.
+
+```bash
+# Both (recommended)
+chembl-curator receptor-sim --data-dir curated_data_filtered --mode both --workers 8
+
+# Sequence identity only (faster, no nuri required)
+chembl-curator receptor-sim --data-dir curated_data_filtered --mode seqid
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--mode` | both | `seqid`, `pocket`, or `both` |
+| `--seqid-threads` | 4 | MMseqs2 thread count |
+| `--workers` | 4 | Processes for pocket RMSD |
+| `--pocket-radius` | 10.0 | Pocket radius in Å |
+
+**Sequence identity:** MMseqs2 all-vs-all → `pairwise_seqid.tsv` (query, target, seqid 0–1)
+
+**Pocket RMSD:** TM-align full chain → filter to pocket residues within radius → RMSD on ≥3 matched pairs → `pairwise_pocket_rmsd.tsv`
+
+---
+
+### Stage 6: `select-decoys`
+
+Selects property-matched, chemically dissimilar decoys per active. Excludes compounds active against receptors similar to the query target.
+
+```bash
+chembl-curator select-decoys --data-dir curated_data_filtered --max-decoys 30
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--max-decoys` | 30 | Decoys per active |
+| `--seqid-thresh` | 0.6 | Seqid threshold for receptor exclusion |
+| `--pocket-rmsd-thresh` | 3.0 | Pocket RMSD threshold (Å) for receptor exclusion |
+| `--exclusion-mode` | or | `or` = exclude if seqid OR pocket matches |
+| `--tanimoto-thresh` | 0.3 | Max Tanimoto between active and decoy |
+
+Property matching windows: ±50 Da MW, ±2 cLogP, ±50 Å² TPSA, ±2 HBD, ±2 HBA, ±1 aromatic ring.
+
+---
+
+### Stage 7: `split`
+
+Train/test split by sequence-identity clustering (MMseqs2). Greedy assignment balances per-source ratios (ChEMBL, PDBbind, BioLip). Per-entry sampling weight = `1 / log2(cluster_size + 1)`.
+
+```bash
+chembl-curator split --data-dir curated_data_filtered --valid-frac 0.1
+
+# Include external datasets
+chembl-curator split --data-dir curated_data_filtered \
+    --external-fasta pdbbind.fasta --external-fasta biolip.fasta \
+    --valid-frac 0.1
+```
+
+External FASTA IDs must be prefixed: `>pdbbind.{pdbid}` or `>biolip.{entry}`.
+
+**Output format** (`train.txt` / `test.txt`):
+```
+chembl/{uniprot}   {chembl_id}   batch   {weight:.2f}
+pdbbind/{pdbid}    ligand        single  {weight:.2f}
+biolip/{entry}     {ligname}     single  {weight:.2f}
+```
+
+---
 
 ## Output Structure
 
-### After Compound Filtering
-
 ```
 curated_data_filtered/
-├── P28222/                      # UniProt ID
-│   └── comps/
-│       └── smiles/
-│           ├── CHEMBL31217.smi
-│           ├── CHEMBL308727.smi
-│           └── ...              # One .smi file per compound
-├── Q9Y6K9/
-│   └── comps/
-│       └── smiles/
-│           └── ...
-└── ...                          # One directory per target
+├── sequences.fasta             # Canonical sequences, all passed targets
+├── best_structure.tsv          # uniprot → best PDB chain + resolution
+├── compound_pool.pkl           # Global compound pool (pickle)
+├── pairwise_seqid.tsv          # All-vs-all sequence identity
+├── pairwise_pocket_rmsd.tsv    # All-vs-all pocket RMSD
+├── passed_targets.txt          # UniProt IDs that passed protein filtering
+├── train.txt                   # Train split entries with weights
+├── test.txt                    # Test split entries with weights
+│
+└── {UniProt}/                  # Per-target directory
+    ├── actives.tsv             # chembl_id, pchembl, smiles
+    ├── actives_clustered.tsv   # + cluster_size column
+    ├── decoys.tsv              # active_chembl_id → decoy_ids (;-sep)
+    ├── comps/smiles/*.smi      # Raw SMILES files from Stage 1
+    ├── pdb/                    # Downloaded PDB + AlphaFold structures
+    ├── aligned/                # Structures aligned to AlphaFold model
+    ├── pdbid.list              # PDB metadata (method, resolution, chains)
+    ├── pocket_info.csv         # Ligand pocket coordinates
+    └── sequence.fasta          # Per-target canonical sequence
 ```
 
-### After Protein Filtering
-
-```
-curated_data_filtered/
-├── P28222/                      # Target that passed all filters
-│   ├── comps/
-│   │   └── smiles/
-│   │       └── *.smi
-│   ├── pdb/                     # Downloaded structures
-│   │   ├── AF-P28222.pdb       # AlphaFold model
-│   │   ├── 1atp.pdb            # Experimental PDB structures
-│   │   ├── 2atp.pdb
-│   │   └── ...
-│   ├── aligned/                 # Structures aligned to AF model (per chain)
-│   │   ├── 1atp_A.pdb
-│   │   ├── 1atp_B.pdb
-│   │   ├── 2atp_A.pdb
-│   │   └── ...
-│   ├── pdbid.list              # PDB information
-│   ├── ligand_bound_pdbs.txt   # Ligand-bound structures
-│   └── pocket_info.csv         # Pocket clustering data
-├── Q9Y6K9/                      # Another target that passed
-│   └── ...
-├── passed_targets.txt           # List of targets that passed protein filtering
-└── ...
-```
-
-### Output Files Description
-
-**pdbid.list** - PDB structure information:
-```
-# PDBID method resolution chains
-1ATP  X-RAY DIFFRACTION  2.0 A  A/B=1-250
-2ATP  X-RAY DIFFRACTION  1.8 A  A=1-250
-```
-
-**ligand_bound_pdbs.txt** - Structures with biological ligands:
-```
-1ATP  Chain A: ATP
-1ATP  Chain B: ATP
-2ATP  Chain A: ADP,MG
-```
-
-**pocket_info.csv** - Ligand pocket coordinates (from aligned structures):
-```csv
-PDB_ID,Chain,Aligned_File,Ligand_Name,Center_X,Center_Y,Center_Z
-1ATP,A,1atp_A.pdb,ATP,12.345,23.456,34.567
-1ATP,B,1atp_B.pdb,ATP,12.123,23.234,34.345
-2ATP,A,2atp_A.pdb,ADP,12.100,23.200,34.300
-```
-
-**passed_targets.txt** - Final filtered targets:
-```
-P28222
-Q9Y6K9
-P00533
-```
-
-## Protein Filtering Pipeline Details
-
-The protein filtering stage consists of 7 steps:
-
-### 1. Fetch PDB Information
-- Queries UniProt REST API
-- Retrieves PDB ID, method, resolution, chain information
-
-### 2. Download PDB Structures
-- Tries `pdb_get` first (if available, faster with local database)
-- Falls back to RCSB web download (https://files.rcsb.org)
-- Creates `pdb/` directory
-
-### 3. Download AlphaFold Models
-- Downloads from `https://alphafold.ebi.ac.uk/files/AF-{uniid}-F1-model_v6.pdb`
-- Used as reference for alignment
-
-### 4. Detect Ligand-Bound Structures
-- Parses HETATM records
-- Excludes non-biological ligands (ions, buffers, crystallization aids, water)
-- Checks ligand-protein contact (≤4Å)
-- Identifies single-ligand or clustered structures (≤10Å between ligand centers)
-
-### 5. Align Structures
-- Aligns to AlphaFold model using TMalign
-- Saves only chain of interest
-
-### 6. Check Pocket Clustering
-- Re-extracts ligand centers from aligned structures
-- Verifies all ligands in same pocket (≤10Å)
-
-### 7. Filter and Save
-- Keeps only single binding site targets
-- Saves results to `passed_targets.txt`
-
-### Excluded Ligands
-
-Non-biological ligands that are filtered out:
-
-- **Water**: HOH, H2O, WAT
-- **Ions**: CA, MG, ZN, NA, CL, FE, etc.
-- **Buffers**: MES, HEPES, TRIS, etc.
-- **Sugars**: NAG, MAN, GLC, GAL, etc.
-- **Crystallization aids**: PEG, GOL, EDO, SO4, etc.
-
-See `example_scripts/exclusion.py` or `chembl_curator/protein_filter.py` for complete list.
-
-## Examples
-
-### Example 1: Basic Usage
-
-```python
-from chembl_curator import ChEMBLCurator, ProteinFilter
-from pathlib import Path
-
-# Stage 1: Compound filtering
-curator = ChEMBLCurator(log_level='INFO')
-results = curator.run_pipeline(output_dir=Path('curated_data'))
-
-# Stage 2: Protein filtering
-pf = ProteinFilter(curated_dir=Path('curated_data'), log_level='INFO')
-passed = pf.run_pipeline(n_processes=8)
-
-print(f"Final database: {len(passed)} targets")
-```
-
-### Example 2: Custom Thresholds
-
-```python
-from chembl_curator import ChEMBLCurator, CurationConfig
-from pathlib import Path
-
-# More stringent activity threshold
-config = CurationConfig(
-    activity_thresholds={'nM': 100.0, 'uM': 0.1},  # 100 nM instead of 10 µM
-    activity_types=['Ki', 'Kd'],
-    units=['nM', 'uM'],
-    min_pchembl_value=7.0,      # Higher quality data
-    min_confidence_score=8,      # Higher confidence
-    max_heavy_atoms=30,          # Smaller molecules
-    assay_types=['B']            # Binding assays only
-)
-
-curator = ChEMBLCurator(config=config, log_level='INFO')
-results = curator.run_pipeline(output_dir=Path('curated_high_quality'))
-```
-
-### Example 3: Process Specific Targets
-
-```python
-from chembl_curator.protein_filter import ProteinFilter
-from pathlib import Path
-
-pf = ProteinFilter(Path('curated_data_filtered'))
-
-# Process specific targets
-targets = ['P28222', 'Q9Y6K9', 'P00533']
-passed = []
-
-for target in targets:
-    try:
-        if pf.process_target(target):
-            passed.append(target)
-            print(f"✓ {target} passed")
-        else:
-            print(f"✗ {target} filtered out")
-    except Exception as e:
-        print(f"✗ {target} error: {e}")
-
-print(f"\nPassed: {passed}")
-```
-
-### Example 4: Inspect Results
-
-```python
-from pathlib import Path
-import pandas as pd
-
-# Read passed targets
-with open('curated_data_filtered/passed_targets.txt') as f:
-    targets = [line.strip() for line in f]
-
-print(f"Total passed targets: {len(targets)}")
-
-# Inspect a specific target
-target = targets[0]
-target_dir = Path('curated_data_filtered') / target
-
-# Count compounds
-compounds = list((target_dir / 'comps' / 'smiles').glob('*.smi'))
-print(f"\n{target}: {len(compounds)} compounds")
-
-# Read PDB list
-with open(target_dir / 'pdbid.list') as f:
-    pdbs = [line for line in f if not line.startswith('#')]
-print(f"PDB structures: {len(pdbs)}")
-
-# Read pocket info
-pocket_df = pd.read_csv(target_dir / 'pocket_info.csv')
-print(f"\nPocket info:")
-print(pocket_df)
-```
-
-## Performance
-
-### Compound Filtering
-- **Time**: 10-30 minutes (depending on database size)
-- **Memory**: ~2-4 GB
-- **Output**: ~1000-5000 targets (depends on filters)
-
-### Protein Filtering
-- **Per target**: 30-60 seconds
-- **Total (4000 targets, 8 cores)**: 3-6 hours
-- **Memory**: 100-500 MB per process
-- **Recommended**: 8-16 processes for optimal performance
-
-### Disk Space
-
-- **ChEMBL database**: ~3 GB
-- **Compound filtering output**: ~10-50 MB
-- **Protein filtering output**: ~500 MB - 5 GB (depends on number of PDBs)
-
-## Troubleshooting
-
-### Common Issues
-
-**1. PDB download issues**
-```bash
-# pdb_get is now optional - the pipeline automatically falls back to RCSB web download
-# If you want faster downloads and have access to a local PDB database:
-which pdb_get
-
-# If pdb_get is not found but you have it installed:
-export PATH=/path/to/pdb_tools:$PATH
-
-# Otherwise, web download from RCSB will be used automatically (requires internet)
-```
-
-**2. TMalign not found**
-```bash
-# Create bin directory and symlink to TMalign
-mkdir -p ./bin
-ln -s /path/to/TMalign ./bin/TMalign
-
-# Or update path in protein_filter.py line 460
-```
-
-**3. Memory issues with parallel processing**
-```bash
-# Reduce number of processes
-chembl-curator filter-proteins --curated-dir curated_data_filtered --n-processes 4
-```
-
-**4. Download failures**
-- Check internet connection
-- Some PDBs may be obsolete (pipeline continues)
-- Some targets may not have AlphaFold models (filtered out)
-
-**5. Import errors**
-```bash
-# Reinstall package
-pip install -e .
-
-# Or check Python path
-export PYTHONPATH=/path/to/ChEMBL-Q:$PYTHONPATH
-```
-
-### Debug Mode
-
-For detailed error messages:
-
-```bash
-# Compound filtering
-chembl-curator curate --download --output test_output --log-level DEBUG
-
-# Protein filtering
-chembl-curator filter-proteins --curated-dir test_output --n-processes 1 --log-level DEBUG
-```
+---
 
 ## Project Structure
 
 ```
 ChEMBL-Q/
-├── chembl_curator/              # Main package
+├── chembl_curator/
 │   ├── __init__.py
-│   ├── cli.py                   # Command-line interface
-│   ├── config.py                # Configuration classes
-│   ├── curator.py               # Compound filtering
-│   ├── downloader.py            # ChEMBL downloader
-│   ├── filters.py               # Activity and compound filters
-│   ├── protein_filter.py        # Protein filtering pipeline
-│   └── utils.py                 # Utility functions
-├── example_scripts/             # Example usage scripts
-│   ├── getpdb.py
-│   ├── exclusion.py
-│   ├── aligntm.py
-│   └── run_protein_filter.py
-├── pyproject.toml               # Package configuration
-├── README.md                    # This file
-├── PROTEIN_FILTERING.md         # Detailed protein filtering docs
-└── .gitignore
+│   ├── cli.py                  # CLI entry points
+│   ├── config.py               # CurationConfig
+│   ├── curator.py              # Stage 1
+│   ├── protein_filter.py       # Stage 2
+│   ├── active_clusterer.py     # Stage 3
+│   ├── compound_pool.py        # Stage 4
+│   ├── receptor_similarity.py  # Stage 5
+│   ├── decoy_selector.py       # Stage 6
+│   ├── splitter.py             # Stage 7
+│   ├── downloader.py
+│   └── filters.py
+├── example_scripts/
+├── tests/
+├── pyproject.toml
+├── PROTEIN_FILTERING.md
+└── README.md
 ```
 
-## Documentation
+---
 
-- **README.md** (this file): Overview and quick start guide
-- **PROTEIN_FILTERING.md**: Detailed protein filtering pipeline documentation
-- **example_scripts/**: Example usage scripts and reference implementations
+## External Tools & Databases
 
-## External DB/Tools Used 
-
-- **ChEMBL** 
-- **AlphaFold DB**
-- **TMalign**
+- [ChEMBL](https://www.ebi.ac.uk/chembl/) — bioactivity database
+- [AlphaFold DB](https://alphafold.ebi.ac.uk/) — predicted protein structures
+- [RCSB PDB](https://www.rcsb.org/) — experimental protein structures
+- [MMseqs2](https://github.com/soedinglab/MMseqs2) — fast sequence search/clustering
+- [TMalign](https://zhanggroup.org/TM-align/) — structure alignment
+- [nuri](https://github.com/seoklab/nurikit) — Python TMalign bindings
 
 ## License
 
 This project is provided as-is for research purposes.
-

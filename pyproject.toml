@@ -5,41 +5,37 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chembl-curator"
-version = "0.1.0"
-description = "A Python package for curating ChEMBL bioactivity data"
+version = "0.2.0"
+description = "A pipeline for curating ChEMBL into ML-ready screening datasets"
 readme = "README.md"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "Jiho Sim"}
 ]
 license = {text = "MIT"}
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research", 
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9", 
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Scientific/Engineering :: Chemistry",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
-    "rdkit>=2023.3.2",
-    "pandas>=1.5.0",
-    "numpy>=1.24.0", 
+    "rdkit>=2024.3.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
     "requests>=2.28.0",
     "tqdm>=4.64.0",
     "click>=8.1.0",
-    "pydantic>=2.0.0",
+    # nurikit provides the 'nuri' import (TMalign bindings, stage 5)
+    # Install via: pip install nurikit
+    # or from source: https://github.com/seoklab/nurikit
+    "nurikit>=0.1.0a16",
 ]
-
-[project.urls]
-Homepage = "https://github.com/username/chembl-curator"
-Repository = "https://github.com/username/chembl-curator.git"
-Issues = "https://github.com/username/chembl-curator/issues"
 
 [project.scripts]
 chembl-curator = "chembl_curator.cli:cli"
