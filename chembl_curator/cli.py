@@ -5,6 +5,11 @@ from pathlib import Path
 from .curator import ChEMBLCurator
 from .config import CurationConfig
 from .protein_filter import ProteinFilter
+from .active_clusterer import ActiveClusterer
+from .compound_pool import CompoundPool
+from .receptor_similarity import ReceptorSimilarity
+from .decoy_selector import DecoySelector
+from .splitter import TargetSplitter
 
 
 @click.group()
@@ -181,6 +186,160 @@ def main(database, output, download, config, create_config, activity_types, rela
     click.echo(f"Total compounds: {results.total_compounds}")
     click.echo(f"Total proteins: {results.total_proteins}")
     click.echo(f"Output directory: {results.output_directory}")
+
+
+@cli.command(name='cluster-actives')
+@click.option('--data-dir', '-d', required=True, type=click.Path(exists=True),
+              help='Root data directory with per-target subdirs (curated_data_filtered)')
+@click.option('--dist-thresh', type=float, default=0.3, show_default=True,
+              help='Butina Tanimoto distance threshold (0.3 = similarity >= 0.7)')
+@click.option('--workers', '-n', type=int, default=1, show_default=True,
+              help='Number of parallel worker processes')
+@click.option('--log-level', default='INFO',
+              type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']))
+def cluster_actives(data_dir, dist_thresh, workers, log_level):
+    """Stage 3: Butina cluster actives per target.
+
+    Reads actives.tsv (or falls back to .smi files) and writes
+    actives_clustered.tsv to each target directory.
+    """
+    clusterer = ActiveClusterer(dist_thresh=dist_thresh, log_level=log_level)
+    stats = clusterer.run(Path(data_dir), workers=workers)
+    click.echo(f"Done: {stats['total_actives']} actives → {stats['total_clusters']} representatives "
+               f"across {stats['n_targets']} targets")
+
+
+@cli.command(name='build-pool')
+@click.option('--data-dir', '-d', required=True, type=click.Path(exists=True),
+              help='Root data directory')
+@click.option('--output', '-o', type=click.Path(),
+              help='Output pickle path (default: data_dir/compound_pool.pkl)')
+@click.option('--log-level', default='INFO',
+              type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']))
+def build_pool(data_dir, output, log_level):
+    """Stage 4: Build global compound pool from clustered actives.
+
+    Reads actives_clustered.tsv from each passed target and writes
+    compound_pool.pkl with per-compound properties and fingerprints.
+    """
+    pool_builder = CompoundPool(log_level=log_level)
+    out_path = pool_builder.build(
+        Path(data_dir),
+        output=Path(output) if output else None,
+    )
+    click.echo(f"Compound pool saved to: {out_path}")
+
+
+@cli.command(name='receptor-sim')
+@click.option('--data-dir', '-d', required=True, type=click.Path(exists=True),
+              help='Root data directory')
+@click.option('--mode', type=click.Choice(['seqid', 'pocket', 'both']), default='both',
+              show_default=True, help='Which similarity metrics to compute')
+@click.option('--seqid-threads', type=int, default=4, show_default=True,
+              help='MMseqs2 thread count (for seqid mode)')
+@click.option('--workers', '-n', type=int, default=4, show_default=True,
+              help='Worker processes for pocket RMSD computation')
+@click.option('--pocket-radius', type=float, default=10.0, show_default=True,
+              help='Pocket radius in Å for pocket RMSD')
+@click.option('--log-level', default='INFO',
+              type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']))
+def receptor_sim(data_dir, mode, seqid_threads, workers, pocket_radius, log_level):
+    """Stage 5: Compute pairwise receptor similarity.
+
+    Sequence identity via MMseqs2 all-vs-all (requires mmseqs in PATH).
+    Pocket RMSD via nuri TMalign on aligned structures.
+
+    Outputs: pairwise_seqid.tsv and/or pairwise_pocket_rmsd.tsv
+    """
+    sim = ReceptorSimilarity(log_level=log_level)
+    results = sim.run(
+        Path(data_dir),
+        mode=mode,
+        seqid_threads=seqid_threads,
+        workers=workers,
+        pocket_radius=pocket_radius,
+    )
+    for key, path in results.items():
+        click.echo(f"  {key}: {path}")
+
+
+@cli.command(name='select-decoys')
+@click.option('--data-dir', '-d', required=True, type=click.Path(exists=True),
+              help='Root data directory')
+@click.option('--max-decoys', type=int, default=30, show_default=True,
+              help='Maximum decoys per active compound')
+@click.option('--seqid-thresh', type=float, default=0.6, show_default=True,
+              help='Seqid threshold for receptor exclusion')
+@click.option('--pocket-rmsd-thresh', type=float, default=3.0, show_default=True,
+              help='Pocket RMSD threshold (Å) for receptor exclusion')
+@click.option('--exclusion-mode', type=click.Choice(['or', 'and']), default='or',
+              show_default=True,
+              help='"or" = exclude if seqid OR pocket matches; "and" = both must match')
+@click.option('--tanimoto-thresh', type=float, default=0.3, show_default=True,
+              help='Max Tanimoto similarity between active and decoy')
+@click.option('--seed', type=int, default=42, show_default=True,
+              help='Random seed')
+@click.option('--log-level', default='INFO',
+              type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']))
+def select_decoys(data_dir, max_decoys, seqid_thresh, pocket_rmsd_thresh,
+                  exclusion_mode, tanimoto_thresh, seed, log_level):
+    """Stage 6: Receptor-aware decoy selection.
+
+    For each active, selects up to max_decoys property-matched,
+    chemically dissimilar decoys. Actives against similar receptors
+    (by seqid and/or pocket RMSD) are excluded from the decoy pool.
+
+    Writes decoys.tsv to each target directory.
+    """
+    selector = DecoySelector(
+        max_decoys=max_decoys,
+        seqid_thresh=seqid_thresh,
+        pocket_rmsd_thresh=pocket_rmsd_thresh,
+        exclusion_mode=exclusion_mode,
+        tanimoto_thresh=tanimoto_thresh,
+        seed=seed,
+        log_level=log_level,
+    )
+    stats = selector.run(Path(data_dir))
+    click.echo(f"Done: {stats.get('n_total_decoys', 0)} active-decoy pairs, "
+               f"{stats.get('n_underfilled', 0)} actives underfilled")
+
+
+@cli.command(name='split')
+@click.option('--data-dir', '-d', required=True, type=click.Path(exists=True),
+              help='Root data directory')
+@click.option('--seqid', type=float, default=0.3, show_default=True,
+              help='MMseqs2 clustering seqid threshold')
+@click.option('--valid-frac', type=float, default=0.1, show_default=True,
+              help='Fraction of clusters to assign to test set')
+@click.option('--threads', type=int, default=4, show_default=True,
+              help='MMseqs2 thread count')
+@click.option('--external-fasta', multiple=True, type=click.Path(exists=True),
+              help='Optional external FASTA file(s) (PDBbind, BioLip, etc.). '
+                   'IDs must be prefixed with "pdbbind." or "biolip."')
+@click.option('--output-dir', type=click.Path(),
+              help='Output directory for train.txt/test.txt (default: data-dir)')
+@click.option('--log-level', default='INFO',
+              type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']))
+def split(data_dir, seqid, valid_frac, threads, external_fasta, output_dir, log_level):
+    """Stage 7: Train/test split by sequence-identity clustering.
+
+    Clusters all passed targets (+ optional external datasets) at the given
+    seqid threshold. Clusters are greedily assigned to train/test while
+    balancing each data source.
+
+    Requires mmseqs in PATH.
+    Writes train.txt and test.txt with per-entry sampling weights.
+    """
+    splitter = TargetSplitter(seqid=seqid, valid_frac=valid_frac,
+                               threads=threads, log_level=log_level)
+    train_path, test_path = splitter.run(
+        Path(data_dir),
+        external_fasta=[Path(p) for p in external_fasta] if external_fasta else None,
+        output_dir=Path(output_dir) if output_dir else None,
+    )
+    click.echo(f"Train: {train_path}")
+    click.echo(f"Test:  {test_path}")
 
 
 if __name__ == '__main__':
