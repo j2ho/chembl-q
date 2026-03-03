@@ -143,7 +143,8 @@ class ChEMBLCurator:
             a.standard_type,
             a.standard_relation,
             a.standard_value,
-            a.standard_units
+            a.standard_units,
+            a.pchembl_value
         FROM activities a
         JOIN molecule_dictionary md ON a.molregno = md.molregno
         JOIN assays ass ON a.assay_id = ass.assay_id
@@ -197,31 +198,36 @@ class ChEMBLCurator:
         output_dir = Path(output_dir)
         output_dir.mkdir(exist_ok=True, parents=True)
         
+        # {uniprot: {chembl_id: (smiles, pchembl)}} — keeps best pChEMBL per compound per target
         protein_compounds = {}
         filtered_count = 0
-        
+
         for activity in activities:
-            target_chembl, compound_chembl, std_type, std_relation, std_value, std_units = activity
-            
+            target_chembl, compound_chembl, _std_type, _std_relation, std_value, std_units, pchembl = activity
+
             if not self.activity_filter.is_active(std_value, std_units):
                 continue
-                
+
             if target_chembl not in chembl_to_uniprot:
                 continue
             uniprot_id = chembl_to_uniprot[target_chembl]
-            
+
             if compound_chembl not in chembl_to_smiles:
                 continue
             smiles = chembl_to_smiles[compound_chembl]
-            
+
             if not self.compound_filter.is_valid(smiles):
                 continue
-            
+
+            pchembl_f = float(pchembl) if pchembl is not None else 0.0
+
             if uniprot_id not in protein_compounds:
-                protein_compounds[uniprot_id] = set()
-            protein_compounds[uniprot_id].add((compound_chembl, smiles))
+                protein_compounds[uniprot_id] = {}
+            existing = protein_compounds[uniprot_id].get(compound_chembl)
+            if existing is None or pchembl_f > existing[1]:
+                protein_compounds[uniprot_id][compound_chembl] = (smiles, pchembl_f)
             filtered_count += 1
-        
+
         total_compounds = self._write_output_files(protein_compounds, output_dir)
         
         return CurationResults(
@@ -233,20 +239,30 @@ class ChEMBLCurator:
         )
     
     def _write_output_files(
-        self, 
-        protein_compounds: Dict[str, set], 
+        self,
+        protein_compounds: Dict[str, Dict],
         output_dir: Path
     ) -> int:
         total_compounds = 0
-        
+
         for uniprot_id, compounds in protein_compounds.items():
-            prot_dir = output_dir / uniprot_id / "comps" / "smiles"
-            prot_dir.mkdir(parents=True, exist_ok=True)
-            
-            for compound_id, smiles in compounds:
-                smi_file = prot_dir / f"{compound_id}.smi"
+            target_dir = output_dir / uniprot_id
+            smi_dir = target_dir / "comps" / "smiles"
+            smi_dir.mkdir(parents=True, exist_ok=True)
+
+            # Write individual .smi files (existing format)
+            for compound_id, (smiles, _) in compounds.items():
+                smi_file = smi_dir / f"{compound_id}.smi"
                 with open(smi_file, 'w') as f:
                     f.write(smiles)
-                total_compounds += 1
-        
+
+            # Write actives.tsv (chembl_id, pchembl, smiles) — used by downstream stages
+            tsv_path = target_dir / "actives.tsv"
+            with open(tsv_path, 'w') as f:
+                f.write("chembl_id\tpchembl\tsmiles\n")
+                for compound_id, (smiles, pchembl) in sorted(compounds.items()):
+                    f.write(f"{compound_id}\t{pchembl:.4f}\t{smiles}\n")
+
+            total_compounds += len(compounds)
+
         return total_compounds

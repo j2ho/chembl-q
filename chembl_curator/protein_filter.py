@@ -104,15 +104,12 @@ class ProteinFilter:
                 targets.append(item.name)
         return targets
 
-    def fetch_pdb_list(self, uniprot_id: str) -> List[PDBInfo]:
+    def fetch_uniprot_info(self, uniprot_id: str) -> Tuple[List[PDBInfo], Optional[str]]:
         """
-        Fetch PDB structures for a given uniprot ID from UniProt REST API.
-
-        Args:
-            uniprot_id: UniProt accession ID
+        Fetch PDB structures and canonical sequence for a UniProt ID in one API call.
 
         Returns:
-            List of PDBInfo objects with PDB ID, method, resolution, and chain info
+            (pdb_list, canonical_sequence) — sequence is None if unavailable
         """
         try:
             url = f'https://rest.uniprot.org/uniprotkb/{uniprot_id}'
@@ -126,22 +123,27 @@ class ProteinFilter:
                     if xref['database'] == 'PDB':
                         pdb_id = xref['id']
                         properties = {p['key']: p['value'] for p in xref.get('properties', [])}
-                        method = properties.get('Method', '-')
-                        resolution = properties.get('Resolution', '-')
-                        chains = properties.get('Chains', '-')
-
                         pdb_list.append(PDBInfo(
                             pdb_id=pdb_id,
-                            method=method,
-                            resolution=resolution,
-                            chains=chains
+                            method=properties.get('Method', '-'),
+                            resolution=properties.get('Resolution', '-'),
+                            chains=properties.get('Chains', '-')
                         ))
 
-            return pdb_list
+            sequence = None
+            if 'sequence' in data and 'value' in data['sequence']:
+                sequence = data['sequence']['value']
+
+            return pdb_list, sequence
 
         except Exception as e:
-            self.logger.error(f"Error fetching PDB list for {uniprot_id}: {e}")
-            return []
+            self.logger.error(f"Error fetching UniProt info for {uniprot_id}: {e}")
+            return [], None
+
+    def fetch_pdb_list(self, uniprot_id: str) -> List[PDBInfo]:
+        """Fetch PDB structures for a given uniprot ID (backward-compatible wrapper)."""
+        pdb_list, _ = self.fetch_uniprot_info(uniprot_id)
+        return pdb_list
 
     def save_pdb_list(self, target_dir: Path, pdb_list: List[PDBInfo]):
         """Save PDB list to file."""
@@ -592,8 +594,8 @@ class ProteinFilter:
 
         self.logger.info(f"Processing target {uniprot_id}")
 
-        # Step 1: Fetch PDB list
-        pdb_list = self.fetch_pdb_list(uniprot_id)
+        # Step 1: Fetch PDB list and canonical sequence
+        pdb_list, sequence = self.fetch_uniprot_info(uniprot_id)
         if not pdb_list:
             self.logger.warning(f"No PDB structures found for {uniprot_id}")
             return False
@@ -735,8 +737,60 @@ class ProteinFilter:
             self.logger.info(f"Multiple binding pockets detected for {uniprot_id}")
             return False
 
+        # Write per-target sequence FASTA (combined into sequences.fasta at the end)
+        if sequence:
+            seq_fasta = target_dir / "sequence.fasta"
+            with open(seq_fasta, 'w') as f:
+                f.write(f">{uniprot_id}\n{sequence}\n")
+
         self.logger.info(f"Target {uniprot_id} passed all filters (single binding site)")
         return True
+
+    def _get_best_structure(self, target_dir: Path) -> Optional[Tuple[str, float]]:
+        """
+        Return (pdbid_chain, resolution) for the best (lowest-resolution) structure.
+
+        Reads pocket_info.csv for available aligned structures and pdbid.list for resolutions.
+        pdbid_chain format matches the aligned filename stem, e.g. "3mms_A".
+        """
+        import csv as _csv
+        pocket_csv = target_dir / "pocket_info.csv"
+        if not pocket_csv.exists():
+            return None
+
+        pdbid_chains = set()
+        with open(pocket_csv) as f:
+            for row in _csv.DictReader(f):
+                pdbid_chains.add(row['Aligned_File'].replace('.pdb', ''))
+
+        if not pdbid_chains:
+            return None
+
+        # Parse resolutions from pdbid.list
+        res_map: Dict[str, float] = {}
+        pdbid_list = target_dir / "pdbid.list"
+        if pdbid_list.exists():
+            with open(pdbid_list) as f:
+                for line in f:
+                    if line.startswith('#') or not line.strip():
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        pdbid = parts[0].upper()
+                        try:
+                            res_map[pdbid] = float(parts[2].rstrip('A'))
+                        except ValueError:
+                            res_map[pdbid] = 99.0
+
+        best_chain, best_res = None, 99.0
+        for pc in pdbid_chains:
+            pdbid = pc.split('_')[0].upper()
+            res = res_map.get(pdbid, 99.0)
+            if res < best_res:
+                best_res = res
+                best_chain = pc
+
+        return (best_chain, best_res) if best_chain else None
 
     def run_pipeline(self, n_processes: int = 1) -> List[str]:
         """
@@ -776,6 +830,10 @@ class ProteinFilter:
 
         self.logger.info(f"Pipeline complete: {len(passed_targets)}/{len(targets)} targets passed")
 
+        # Combine per-target sequence.fasta into global sequences.fasta
+        # and write best_structure.tsv for pocket RMSD computation
+        self._write_global_outputs(passed_targets)
+
         # Optionally delete filtered-out targets
         for target in targets:
             if target not in passed_targets:
@@ -785,6 +843,33 @@ class ProteinFilter:
                     shutil.rmtree(target_dir)
 
         return passed_targets
+
+    def _write_global_outputs(self, passed_targets: List[str]) -> None:
+        """Write sequences.fasta and best_structure.tsv for all passed targets."""
+        seq_fasta = self.curated_dir / "sequences.fasta"
+        best_str_tsv = self.curated_dir / "best_structure.tsv"
+
+        n_seq = 0
+        n_best = 0
+        with open(seq_fasta, 'w') as sf, open(best_str_tsv, 'w') as bf:
+            bf.write("uniprot\tpdbid_chain\tresolution\n")
+            for target in passed_targets:
+                target_dir = self.curated_dir / target
+
+                # Append sequence
+                per_seq = target_dir / "sequence.fasta"
+                if per_seq.exists():
+                    sf.write(per_seq.read_text())
+                    n_seq += 1
+
+                # Append best structure entry
+                best = self._get_best_structure(target_dir)
+                if best:
+                    bf.write(f"{target}\t{best[0]}\t{best[1]:.2f}\n")
+                    n_best += 1
+
+        self.logger.info(f"Wrote sequences.fasta ({n_seq} sequences) and "
+                         f"best_structure.tsv ({n_best} entries)")
 
     def _process_target_wrapper(self, target: str) -> bool:
         """Wrapper for multiprocessing."""
