@@ -1,3 +1,60 @@
-  *.egg-info/
-  __pycache__/
-  CLAUDE.md
+# Python
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*.un~
+
+# Claude
+CLAUDE.md
+
+# ChEMBL database files (large binary)
+chembl_data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Curated output data directories (large)
+curated_data/
+curated_chembl/
+curated_data_filtered/
+test_curated/
+
+# Per-run outputs / logs
+log.out
+log.err
+*.log
+run.sh
+
+# Global pipeline outputs (large TSV/pkl)
+*.pkl
+pairwise_seqid.tsv
+pairwise_pocket_rmsd.tsv
+compound_pool.pkl
+train.txt
+test.txt
+passed_targets.txt
+sequences.fasta
+best_structure.tsv
+
+# Temporary files
+tmp/
+temp/
+*.tmp
