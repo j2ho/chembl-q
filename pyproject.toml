@@ -28,6 +28,7 @@ dependencies = [
     "rdkit>=2024.3.0",
     "pandas>=2.0.0",
     "numpy>=1.24.0",
+    "scipy>=1.10.0",
     "requests>=2.28.0",
     "tqdm>=4.64.0",
     "click>=8.1.0",
@@ -45,4 +46,4 @@ where = ["."]
 include = ["chembl_curator*"]
 
 [tool.setuptools.package-data]
-chembl_curator = ["data/*.txt", "config/*.yaml"]
+chembl_curator = ["assets/*.txt", "data/*.txt", "config/*.yaml"]

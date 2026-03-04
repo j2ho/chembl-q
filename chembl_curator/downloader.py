@@ -10,7 +10,7 @@ import logging
 
 
 class ChEMBLDownloader:    
-    def __init__(self, version: str = "35"):
+    def __init__(self, version: str = "36"):
         self.version = version
         self.base_url = f"https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/releases/chembl_{version}"
         self.logger = logging.getLogger(__name__)
