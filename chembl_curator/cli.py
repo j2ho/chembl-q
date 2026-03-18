@@ -90,9 +90,11 @@ def curate(database, output, download, config, create_config, activity_types, re
               help='Directory containing curated targets (uniprot IDs)')
 @click.option('--n-processes', '-n', default=1, type=int,
               help='Number of parallel processes (default: 1)')
+@click.option('--max-chain-residues', default=1500, type=int,
+              help='Skip PDB structures whose target chain exceeds this many residues (0 = no limit)')
 @click.option('--log-level', default='INFO',
               type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']))
-def filter_proteins(curated_dir, n_processes, log_level):
+def filter_proteins(curated_dir, n_processes, max_chain_residues, log_level):
     """
     Filter protein structures based on PDB availability and binding site analysis.
 
@@ -109,7 +111,8 @@ def filter_proteins(curated_dir, n_processes, log_level):
 
     protein_filter = ProteinFilter(
         curated_dir=Path(curated_dir),
-        log_level=log_level
+        log_level=log_level,
+        max_chain_residues=max_chain_residues,
     )
 
     passed_targets = protein_filter.run_pipeline(n_processes=n_processes)

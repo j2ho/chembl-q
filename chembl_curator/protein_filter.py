@@ -45,13 +45,17 @@ class LigandInfo:
 class ProteinFilter:
     """Filter protein structures based on PDB availability and binding site analysis."""
 
-    def __init__(self, curated_dir: Path, log_level: str = "INFO"):
+    def __init__(self, curated_dir: Path, log_level: str = "INFO",
+                 max_chain_residues: int = 1500):
         """
         Args:
             curated_dir: Directory containing target subdirectories (uniprot IDs)
             log_level: Logging level
+            max_chain_residues: Skip PDB structures whose target chain exceeds
+                this many residues (catches ribosomes, nanodiscs, etc.). 0 = no limit.
         """
         self.curated_dir = Path(curated_dir)
+        self.max_chain_residues = max_chain_residues
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(getattr(logging, log_level.upper()))
 
@@ -232,6 +236,20 @@ class ProteinFilter:
                     if ch.strip():
                         chains.append(ch.strip())
         return chains
+
+    @staticmethod
+    def _count_chain_residues(pdb_file: Path, chains: List[str]) -> int:
+        """Count Cα atoms in *chains* as a proxy for residue count."""
+        if not chains:
+            return 0
+        chain_set = set(chains)
+        count = 0
+        with open(pdb_file) as f:
+            for line in f:
+                if line.startswith("ATOM") and line[12:16].strip() == "CA":
+                    if line[21] in chain_set:
+                        count += 1
+        return count
 
     def get_ligands_from_pdb(self, pdb_file: Path, target_chains: List[str]) -> List[LigandInfo]:
         """
@@ -426,78 +444,88 @@ class ProteinFilter:
 
         return True
 
+    @staticmethod
+    def _extract_ca_chain(pdb_path: Path, chain_id: str = "") -> np.ndarray:
+        """Extract Cα coordinates from a PDB file, optionally for a specific chain.
+
+        Args:
+            pdb_path: Path to PDB file
+            chain_id: If non-empty, only extract Cα from this chain.
+                      If empty, extract all Cα.
+
+        Returns:
+            (N, 3) numpy array of Cα coordinates.
+        """
+        import nuri
+
+        mol = list(nuri.readfile('pdb', str(pdb_path), sanitize=False))[0]
+        ca = []
+        for sub in mol.subs:
+            if chain_id and sub.props.get('chain', '') != chain_id:
+                continue
+            for atom in sub:
+                if atom.name.strip() == 'CA' and atom.element_symbol == 'C':
+                    ca.append(atom.get_pos(0))
+        return np.array(ca) if ca else np.empty((0, 3))
+
     def align_pdb(self, query_pdb: Path, template_pdb: Path, output_pdb: Path, target_chain: str):
         """
-        Align PDB structure to template using TMalign and save a single target protein chain and all ligands.
+        Align PDB structure to template using nuri TMAlign and save a single
+        target protein chain and all ligands.
 
         Args:
             query_pdb: Query PDB file to align
-            template_pdb: Template PDB file (reference)
+            template_pdb: Template PDB file (reference, e.g. AlphaFold model)
             output_pdb: Output aligned PDB file
             target_chain: Single chain ID to save for protein atoms (all HETATMs are saved)
         """
         try:
-            # Run TMalign
-            cmd = ["./bin/TMalign", str(query_pdb), str(template_pdb)]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-            stdout = result.stdout
+            import nuri._log_interface
+            nuri._log_interface.set_log_level(4)  # suppress C++ warnings
+            from nuri.tools.tm import TMAlign
 
-            # Parse transformation matrix
-            lines = stdout.splitlines()
-            t = [0.0, 0.0, 0.0]
-            u = [[0.0]*3 for _ in range(3)]
+            # Extract Cα: target chain from query, all from template
+            ca_query = self._extract_ca_chain(query_pdb, chain_id=target_chain)
+            ca_template = self._extract_ca_chain(template_pdb)
 
-            idx = None
-            for i, line in enumerate(lines):
-                if "Rotation matrix to rotate Chain-1 to Chain-2" in line or \
-                   "-------- rotation matrix to rotate Chain-1 to Chain-2" in line:
-                    idx = i
-                    break
-
-            if idx is None:
-                self.logger.error(f"Rotation matrix not found in TMalign output")
+            if len(ca_query) < 5 or len(ca_template) < 5:
+                self.logger.warning(
+                    f"Too few Cα atoms for alignment: query={len(ca_query)}, "
+                    f"template={len(ca_template)}"
+                )
                 return
 
-            # Parse matrix (format: " t[i] u[i][0] u[i][1] u[i][2]")
-            for i in range(3):
-                parts = lines[idx+2+i].split()
-                t[i] = float(parts[1])
-                u[i][0] = float(parts[2])
-                u[i][1] = float(parts[3])
-                u[i][2] = float(parts[4])
+            tma = TMAlign(ca_query, ca_template)
+            xform, _ = tma.score()       # xform is a 4x4 affine matrix
+            R = xform[:3, :3]
+            t = xform[:3, 3]
 
             # Apply transformation and save target chain (ATOM) and all ligands (HETATM)
             with open(query_pdb, 'r') as fin, open(output_pdb, 'w') as fout:
                 for line in fin:
                     if line.startswith("ATOM"):
                         chain = line[21:22].strip()
-                        # Only save the specific target chain for protein atoms
                         if chain != target_chain:
                             continue
                     elif line.startswith("HETATM"):
-                        # Save all HETATM lines regardless of chain
-                        # The contact-checking logic will filter them later
                         pass
                     else:
-                        # Skip non-ATOM/HETATM lines
                         continue
 
                     try:
-                        x = float(line[30:38])
-                        y = float(line[38:46])
-                        z = float(line[46:54])
-                    except:
+                        coord = np.array([
+                            float(line[30:38]),
+                            float(line[38:46]),
+                            float(line[46:54]),
+                        ])
+                    except ValueError:
                         fout.write(line)
                         continue
 
-                    # Transform coordinates
-                    X = t[0] + u[0][0]*x + u[0][1]*y + u[0][2]*z
-                    Y = t[1] + u[1][0]*x + u[1][1]*y + u[1][2]*z
-                    Z = t[2] + u[2][0]*x + u[2][1]*y + u[2][2]*z
-
+                    new_coord = R @ coord + t
                     new_line = (
                         line[:30]
-                        + f"{X:8.3f}{Y:8.3f}{Z:8.3f}"
+                        + f"{new_coord[0]:8.3f}{new_coord[1]:8.3f}{new_coord[2]:8.3f}"
                         + line[54:]
                     )
                     fout.write(new_line)
@@ -570,19 +598,22 @@ class ProteinFilter:
 
         af_model = pdb_dir / f"AF-{uniprot_id}.pdb"
 
-        # Download PDBs (skip files > 10 MB — large assemblies like nanodiscs/ribosomes)
-        max_pdb_bytes = 10 * 1024 * 1024
+        # Download PDBs, skip structures with oversized target chains
         downloaded_pdbs = []
         for pdb_info in pdb_list:
             if self.download_pdb(pdb_info.pdb_id, pdb_dir):
-                pdb_file = pdb_dir / f"{pdb_info.pdb_id.lower()}.pdb"
-                if pdb_file.stat().st_size > max_pdb_bytes:
-                    self.logger.warning(
-                        f"Skipping oversized PDB {pdb_info.pdb_id} "
-                        f"({pdb_file.stat().st_size / 1024 / 1024:.1f} MB)"
-                    )
-                    pdb_file.unlink()
-                    continue
+                if self.max_chain_residues > 0:
+                    pdb_file = pdb_dir / f"{pdb_info.pdb_id.lower()}.pdb"
+                    chains = self.parse_chain_from_pdb_info(pdb_info)
+                    n_res = self._count_chain_residues(pdb_file, chains)
+                    if n_res > self.max_chain_residues:
+                        self.logger.warning(
+                            f"Skipping PDB {pdb_info.pdb_id} "
+                            f"({n_res} residues in target chain, "
+                            f"limit {self.max_chain_residues})"
+                        )
+                        pdb_file.unlink()
+                        continue
                 downloaded_pdbs.append(pdb_info)
 
         if not downloaded_pdbs:

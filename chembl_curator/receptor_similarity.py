@@ -283,13 +283,43 @@ class ReceptorSimilarity:
         self.logger.info(f"Computing pocket RMSD ({workers} workers)...")
         t0 = time.time()
 
-        with Pool(processes=workers, initializer=_suppress_stderr) as pool:
-            results: List[Tuple] = list(
-                pool.imap_unordered(_pocket_rmsd_worker, pair_args, chunksize=256)
+        partial_path = output.parent / (output.stem + ".partial.tsv")
+        log_interval = max(1, n_pairs // 100)  # log every ~1%
+        flush_interval = max(1, n_pairs // 20)  # flush every ~5%
+        results: List[Tuple] = []
+        done = 0
+
+        with (
+            open(partial_path, 'w', newline='') as pf,
+            Pool(processes=workers, initializer=_suppress_stderr) as pool,
+        ):
+            pw = csv.writer(pf, delimiter='\t')
+            pw.writerow(
+                ['target_a', 'target_b', 'tm_score', 'pocket_rmsd', 'n_matched']
             )
+            for row in pool.imap_unordered(
+                _pocket_rmsd_worker, pair_args, chunksize=256
+            ):
+                results.append(row)
+                pw.writerow(row)
+                done += 1
+                if done % log_interval == 0:
+                    elapsed = time.time() - t0
+                    rate = done / elapsed
+                    eta = (n_pairs - done) / rate if rate > 0 else 0
+                    self.logger.info(
+                        f"  pocket RMSD: {done}/{n_pairs} "
+                        f"({100*done/n_pairs:.0f}%) "
+                        f"elapsed {elapsed:.0f}s, ETA {eta:.0f}s"
+                    )
+                if done % flush_interval == 0:
+                    pf.flush()
 
-        self.logger.info(f"Done in {time.time()-t0:.1f}s")
+        self.logger.info(
+            f"Pocket RMSD done: {done} pairs in {time.time()-t0:.1f}s"
+        )
 
+        # Write sorted final output
         results.sort(key=lambda x: (x[0], x[1]))
         with open(output, 'w', newline='') as f:
             writer = csv.writer(f, delimiter='\t')
@@ -298,6 +328,9 @@ class ReceptorSimilarity:
             )
             for row in results:
                 writer.writerow(row)
+
+        # Remove partial file now that final output is written
+        partial_path.unlink(missing_ok=True)
 
         valid_rmsds = [r[3] for r in results if r[3] >= 0]
         if valid_rmsds:
