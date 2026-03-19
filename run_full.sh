@@ -27,9 +27,10 @@ MMseqs_THREADS=$N_CPUS
 # Download locally first: chembl-curator curate --download --output $DATA_DIR
 CHEMBL_DB=/home.galaxy4/j2ho/DB/ChEMBL-Q/chembl_data/chembl_36.db
 
-# External FASTA for PDBbind / BioLip co-clustering in stage 7
-# IDs must be prefixed with pdbbind. or biolip. (already the case here)
-EXTERNAL_FASTA="--external-fasta /home/j2ho/DB/motifscreen/final_targets.fasta"
+# External FASTA for co-clustering in stage 7
+# Bundled PDBbind+BioLip FASTA is used by default.
+# To use a different file: --external-fasta /path/to/your.fasta
+# To skip external sequences: --no-external
 
 # ── Environment ───────────────────────────────────────────────────────────────
 
@@ -103,7 +104,6 @@ chembl-curator split \
     --seqid 0.3 \
     --valid-frac 0.1 \
     --threads "$MMseqs_THREADS" \
-    $EXTERNAL_FASTA \
     --log-level INFO
 
 log "Done. Outputs in: $DATA_DIR"
