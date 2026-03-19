@@ -2,21 +2,28 @@
 
 """Stage 7: Train/test split by sequence-identity clustering.
 
-Clusters all passed targets (and optional external datasets such as PDBbind
-or BioLip) using MMseqs2 at a configurable seqid threshold (default 30%).
-Clusters are greedily assigned to train/test sets while balancing the ratio
-of each data source across both splits.
+Clusters all passed targets (and optional external datasets) using MMseqs2
+at a configurable seqid threshold (default 30%). Clusters are greedily
+assigned to train/test sets while balancing the ratio of each data source
+across both splits.
 
 Per-entry sampling weight = 1 / log2(cluster_size + 1)
 
-Output format (one entry per active compound):
-    chembl/{uniprot}         {chembl_id}  batch   {weight:.2f}
-    pdbbind/{pdbid}          ligand       single  {weight:.2f}
-    biolip/{entry}           {ligname}    single  {weight:.2f}
+External FASTA entries must use dot-prefixed IDs:
+    >{source}.{entry_id}
 
-External FASTA entries must use prefixed IDs:
-    >pdbbind.{pdbid}
-    >biolip.{pdbid_LIGNAME_chain_num}
+For example:
+    >pdbbind.1a4k
+    >biolip.10gs_VWW_A_1
+
+Output format (tab-separated, with header):
+    source  entry_id          compound        weight
+    chembl  P12345            CHEMBL405346    0.17
+    biolip  10gs_VWW_A_1      -               0.19
+    pdbbind 1a4k              -               0.26
+
+Also generates chembl_targets.tsv:
+    uniprot  split  n_actives  n_decoys
 """
 
 import logging
@@ -38,20 +45,13 @@ class TargetSplitter:
         threads: int = 4,
         log_level: str = "INFO",
     ):
-        """
-        Args:
-            seqid: MMseqs2 clustering seqid threshold (default: 0.3 = 30%).
-            valid_frac: Fraction of clusters assigned to test/validation set.
-            threads: MMseqs2 thread count.
-            log_level: Logging level.
-        """
         self.seqid = seqid
         self.valid_frac = valid_frac
         self.threads = threads
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(getattr(logging, log_level.upper()))
 
-    # ── I/O helpers ───────────────────────────────────────────────────────────
+    # -- I/O helpers -----------------------------------------------------------
 
     def _load_fasta(self, path: Path) -> Dict[str, str]:
         """Return {sequence_id: sequence} from a FASTA file."""
@@ -72,7 +72,7 @@ class TargetSplitter:
             seqs[current_id] = ''.join(current_seq)
         return seqs
 
-    # ── MMseqs2 clustering ────────────────────────────────────────────────────
+    # -- MMseqs2 clustering ----------------------------------------------------
 
     def _run_mmseqs_cluster(
         self, fasta: Path, tmpdir: Path
@@ -103,32 +103,35 @@ class TargetSplitter:
                     member_to_rep[member] = rep
         return member_to_rep
 
-    # ── Greedy split ─────────────────────────────────────────────────────────
+    # -- Generic source parsing ------------------------------------------------
 
     @staticmethod
-    def _get_source(sid: str) -> str:
-        if sid.startswith('chembl.'):
-            return 'chembl'
-        if sid.startswith('pdbbind.'):
-            return 'pdbbind'
-        if sid.startswith('biolip.'):
-            return 'biolip'
+    def _parse_source(sid: str) -> str:
+        """Extract source label from a dot-prefixed sequence ID."""
+        dot = sid.find('.')
+        if dot > 0:
+            return sid[:dot]
         return 'other'
+
+    # -- Greedy split ----------------------------------------------------------
 
     def _greedy_split(
         self, cluster_groups: Dict[str, Set[str]]
     ) -> Tuple[Set[str], Set[str]]:
         """Assign clusters to train/test, balancing per-source ratios."""
-        sources = ('chembl', 'pdbbind', 'biolip')
+        # Discover all sources present
+        all_sources: Set[str] = set()
+        for members in cluster_groups.values():
+            for m in members:
+                all_sources.add(self._parse_source(m))
+        sources = sorted(all_sources)
 
         # Per-cluster source composition
         comp: Dict[str, Dict[str, int]] = {}
         for rep, members in cluster_groups.items():
             c: Dict[str, int] = defaultdict(int)
             for m in members:
-                src = self._get_source(m)
-                if src in sources:
-                    c[src] += 1
+                c[self._parse_source(m)] += 1
             comp[rep] = dict(c)
 
         totals = {s: sum(c.get(s, 0) for c in comp.values()) for s in sources}
@@ -180,7 +183,7 @@ class TargetSplitter:
         )
         return train_reps, valid_reps
 
-    # ── Entry point ───────────────────────────────────────────────────────────
+    # -- Entry point -----------------------------------------------------------
 
     def run(
         self,
@@ -188,26 +191,25 @@ class TargetSplitter:
         passed_targets: Optional[List[str]] = None,
         external_fasta: Optional[List[Path]] = None,
         output_dir: Optional[Path] = None,
-    ) -> Tuple[Path, Path]:
-        """Build train/test split files.
+    ) -> Tuple[Path, Path, Path]:
+        """Build train/test split files and chembl_targets.tsv.
 
         Args:
             data_dir: Root data directory.
             passed_targets: UniProt IDs to include. Reads passed_targets.txt if None.
-            external_fasta: Optional list of external FASTA files (PDBbind, BioLip, etc.).
-                IDs must be prefixed with 'pdbbind.' or 'biolip.' as appropriate.
-            output_dir: Output directory for train.txt and test.txt
-                (default: data_dir).
+            external_fasta: Optional list of external FASTA files.
+                IDs must be dot-prefixed: >{source}.{entry_id}
+            output_dir: Output directory (default: data_dir).
 
         Returns:
-            (train.txt path, test.txt path)
+            (train.txt path, test.txt path, chembl_targets.tsv path)
         """
         data_dir = Path(data_dir)
         output_dir = Path(output_dir) if output_dir else data_dir
         output_dir.mkdir(parents=True, exist_ok=True)
 
         if subprocess.run(["which", "mmseqs"], capture_output=True).returncode != 0:
-            raise RuntimeError("mmseqs not found in PATH — install MMseqs2 first")
+            raise RuntimeError("mmseqs not found in PATH - install MMseqs2 first")
 
         if passed_targets is None:
             passed_file = data_dir / "passed_targets.txt"
@@ -305,16 +307,10 @@ class TargetSplitter:
             w = member_weight.get(sid, 1.0)
             is_test = rep in valid_reps
 
-            if sid.startswith('pdbbind.'):
-                pdbid = sid[len('pdbbind.'):]
-                line = f"pdbbind/{pdbid} ligand single {w:.2f}"
-            elif sid.startswith('biolip.'):
-                entry = sid[len('biolip.'):]
-                parts = entry.split('_')
-                ligname = parts[1] if len(parts) >= 3 else 'UNK'
-                line = f"biolip/{entry} {ligname} single {w:.2f}"
-            else:
-                continue
+            source = self._parse_source(sid)
+            dot = sid.find('.')
+            entry_id = sid[dot + 1:] if dot > 0 else sid
+            line = f"{source}\t{entry_id}\t-\t{w:.2f}"
 
             (test_lines if is_test else train_lines).append(line)
 
@@ -326,15 +322,61 @@ class TargetSplitter:
             is_test = rep in valid_reps
 
             for active_id in chembl_actives[uniprot]:
-                line = f"chembl/{uniprot} {active_id} batch {w:.2f}"
+                line = f"chembl\t{uniprot}\t{active_id}\t{w:.2f}"
                 (test_lines if is_test else train_lines).append(line)
+
+        header = "source\tentry_id\tcompound\tweight\n"
 
         train_path = output_dir / "train.txt"
         test_path = output_dir / "test.txt"
-        train_path.write_text('\n'.join(train_lines) + '\n')
-        test_path.write_text('\n'.join(test_lines) + '\n')
+        train_path.write_text(header + '\n'.join(train_lines) + '\n')
+        test_path.write_text(header + '\n'.join(test_lines) + '\n')
 
-        self.logger.info(f"Train: {len(train_lines)} lines → {train_path}")
-        self.logger.info(f"Test:  {len(test_lines)} lines → {test_path}")
+        self.logger.info(f"Train: {len(train_lines)} lines -> {train_path}")
+        self.logger.info(f"Test:  {len(test_lines)} lines -> {test_path}")
 
-        return train_path, test_path
+        # Generate chembl_targets.tsv
+        targets_path = self._write_chembl_targets(
+            data_dir, output_dir, chembl_actives, member_to_rep, valid_reps
+        )
+
+        return train_path, test_path, targets_path
+
+    def _write_chembl_targets(
+        self,
+        data_dir: Path,
+        output_dir: Path,
+        chembl_actives: Dict[str, List[str]],
+        member_to_rep: Dict[str, str],
+        valid_reps: Set[str],
+    ) -> Path:
+        """Write chembl_targets.tsv with per-target summary."""
+        lines: List[str] = ["uniprot\tsplit\tn_actives\tn_decoys"]
+        for uniprot in sorted(chembl_actives):
+            clu_key = f"chembl.{uniprot}"
+            rep = member_to_rep.get(clu_key, clu_key)
+            split_label = "test" if rep in valid_reps else "train"
+
+            n_actives = len(chembl_actives[uniprot])
+
+            # Count decoys
+            n_decoys = 0
+            decoy_tsv = data_dir / uniprot / "decoys.tsv"
+            if decoy_tsv.exists():
+                with open(decoy_tsv) as f:
+                    next(f, None)  # skip header
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            parts = line.split('\t')
+                            if len(parts) >= 2 and parts[1]:
+                                n_decoys += len(parts[1].split(';'))
+
+            lines.append(f"{uniprot}\t{split_label}\t{n_actives}\t{n_decoys}")
+
+        targets_path = output_dir / "chembl_targets.tsv"
+        targets_path.write_text('\n'.join(lines) + '\n')
+        self.logger.info(
+            f"ChEMBL targets summary: {len(lines) - 1} targets -> {targets_path}"
+        )
+        return targets_path
