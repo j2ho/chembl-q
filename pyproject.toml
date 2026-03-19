@@ -46,4 +46,4 @@ where = ["."]
 include = ["chembl_curator*"]
 
 [tool.setuptools.package-data]
-chembl_curator = ["assets/*.txt", "data/*.txt", "config/*.yaml"]
+chembl_curator = ["assets/*.txt", "assets/*.fasta", "data/*.txt", "config/*.yaml"]
