@@ -112,12 +112,12 @@ chembl-curator curate --create-config config.json   # generate example config
 **Configuration (JSON):**
 ```json
 {
-  "activity_thresholds": {"nM": 1000.0, "uM": 1.0},
-  "activity_types": ["Ki", "Kd", "IC50"],
+  "activity_thresholds": {"nM": 10000.0, "uM": 10.0},
+  "activity_types": ["Kd", "Ki", "IC50", "EC50"],
   "relations": ["=", "<="],
   "units": ["nM", "uM"],
-  "min_pchembl_value": 6.0,
-  "min_confidence_score": 8,
+  "min_pchembl_value": 5.0,
+  "min_confidence_score": 6,
   "assay_types": ["B"]
 }
 ```
@@ -132,7 +132,7 @@ Fetches PDB structures, downloads AlphaFold models, aligns structures, and keeps
 chembl-curator filter-proteins --curated-dir curated_data_filtered --n-processes 8
 ```
 
-Steps: fetch UniProt PDB list → download PDB/AlphaFold → detect ligand-bound structures → align to AlphaFold (TMalign) → cluster pockets → filter single-site targets.
+Steps: fetch UniProt PDB list -> download PDB/AlphaFold -> detect ligand-bound structures -> align to AlphaFold (TMalign) -> cluster pockets -> filter single-site targets.
 
 Also writes `sequences.fasta` (canonical UniProt sequences) and `best_structure.tsv` (best-resolution ligand-bound structure per target) needed by later stages.
 
@@ -148,7 +148,7 @@ chembl-curator cluster-actives --data-dir curated_data_filtered --dist-thresh 0.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--dist-thresh` | 0.3 | Tanimoto distance threshold (0.3 → similarity ≥ 0.7) |
+| `--dist-thresh` | 0.3 | Tanimoto distance threshold (0.3 -> similarity ≥ 0.7) |
 | `--workers` | 1 | Parallel worker processes |
 
 ---
@@ -184,9 +184,9 @@ chembl-curator receptor-sim --data-dir curated_data_filtered --mode seqid
 | `--workers` | 4 | Processes for pocket RMSD |
 | `--pocket-radius` | 10.0 | Pocket radius in Å |
 
-**Sequence identity:** MMseqs2 all-vs-all → `pairwise_seqid.tsv` (query, target, seqid 0-1)
+**Sequence identity:** MMseqs2 all-vs-all -> `pairwise_seqid.tsv` (query, target, seqid 0-1)
 
-**Pocket RMSD:** TM-align full chain → filter to pocket residues within radius → RMSD on ≥3 matched pairs → `pairwise_pocket_rmsd.tsv`
+**Pocket RMSD:** TM-align full chain -> filter to pocket residues within radius -> RMSD on ≥3 matched pairs -> `pairwise_pocket_rmsd.tsv`
 
 ---
 
@@ -261,7 +261,7 @@ Q9NR56	test	9	270
 ```
 curated_data_filtered/
 ├── sequences.fasta             # Canonical sequences, all passed targets
-├── best_structure.tsv          # uniprot → best PDB chain + resolution
+├── best_structure.tsv          # uniprot -> best PDB chain + resolution
 ├── compound_pool.pkl           # Global compound pool (pickle)
 ├── pairwise_seqid.tsv          # All-vs-all sequence identity
 ├── pairwise_pocket_rmsd.tsv    # All-vs-all pocket RMSD
@@ -273,7 +273,7 @@ curated_data_filtered/
 └── {UniProt}/                  # Per-target directory
     ├── actives.tsv             # chembl_id, pchembl, smiles
     ├── actives_clustered.tsv   # + cluster_size column
-    ├── decoys.tsv              # active_chembl_id → decoy_ids (;-sep)
+    ├── decoys.tsv              # active_chembl_id -> decoy_ids (;-sep)
     ├── comps/smiles/*.smi      # Raw SMILES files from Stage 1
     ├── pdb/                    # Downloaded PDB + AlphaFold structures
     ├── aligned/                # Structures aligned to AlphaFold model
@@ -304,10 +304,9 @@ ChEMBL-Q/
 │   └── assets/
 │       ├── excluded_ligands.txt
 │       └── external_targets.fasta
-├── example_scripts/
-├── tests/
+├── docs/
+│   └── index.html              # Interactive pipeline overview
 ├── pyproject.toml
-├── PROTEIN_FILTERING.md
 └── README.md
 ```
 
