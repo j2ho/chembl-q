@@ -58,3 +58,5 @@ best_structure.tsv
 tmp/
 temp/
 *.tmp
+example_scripts/
+tests/
