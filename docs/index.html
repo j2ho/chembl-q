@@ -195,7 +195,7 @@ footer a { color: #60a5fa; text-decoration: none; }
   <div class="container">
     <h1>ChEMBL-<span>Q</span></h1>
     <p>A seven-stage pipeline for curating ChEMBL into ready-to-use ML screening datasets:
-       compound filtering, protein structure validation, active clustering,
+       compound filtering, receptor structure validation, active clustering,
        decoy selection, and train/test splitting by receptor similarity.</p>
     <div class="stats">
       <div class="stat"><div class="num">1,543</div><div class="label">Targets</div></div>
@@ -205,9 +205,9 @@ footer a { color: #60a5fa; text-decoration: none; }
     </div>
 
     <div class="pipeline">
-      <div class="pipe-step"><div class="num" style="background:var(--stage1)">1</div>Curate</div>
+      <div class="pipe-step"><div class="num" style="background:var(--stage1)">1</div>Filter Actives</div>
       <div class="pipe-arrow">&rarr;</div>
-      <div class="pipe-step"><div class="num" style="background:var(--stage2)">2</div>Filter Proteins</div>
+      <div class="pipe-step"><div class="num" style="background:var(--stage2)">2</div>Filter Receptors</div>
       <div class="pipe-arrow">&rarr;</div>
       <div class="pipe-step"><div class="num" style="background:var(--stage3)">3</div>Cluster Actives</div>
       <div class="pipe-arrow">&rarr;</div>
@@ -225,7 +225,7 @@ footer a { color: #60a5fa; text-decoration: none; }
 <!-- ======================== TARGET SHOWCASE ======================== -->
 <section>
   <div class="container">
-    <div class="section-title">Example Targets: Protein-Ligand Structures</div>
+    <div class="section-title">Example Targets: Receptor-Ligand Structures</div>
     <p class="section-sub">
       PyMOL-rendered binding sites from two example targets in the curated dataset.
       Binding residues within 4&Aring; shown as sticks; ligands as ball-and-stick; polar contacts as dashes.
@@ -275,7 +275,7 @@ footer a { color: #60a5fa; text-decoration: none; }
       <span class="badge" style="background:var(--stage1)">1</span>
       Filter Active Compounds
     </div>
-    <p class="section-sub">Extract and filter ligand-target pairs from ChEMBL. Only high-confidence, single-protein binding assay data is retained.</p>
+    <p class="section-sub">Extract and filter ligand-target pairs from ChEMBL. Only high-confidence, single-receptor binding assay data is retained.</p>
 
     <div class="two-col">
       <div class="card">
@@ -326,7 +326,7 @@ footer a { color: #60a5fa; text-decoration: none; }
   <div class="container">
     <div class="section-title">
       <span class="badge" style="background:var(--stage2)">2</span>
-      Filter Proteins
+      Filter Receptors
     </div>
     <p class="section-sub">Fetch PDB structures, download AlphaFold models, align via TM-align, and keep only targets
       with a single, validated binding site.</p>
@@ -362,7 +362,7 @@ footer a { color: #60a5fa; text-decoration: none; }
       </div>
     </div>
 
-    <pre><span class="comment"># Stage 2: validate protein structures and binding sites</span>
+    <pre><span class="comment"># Stage 2: validate receptor structures and binding sites</span>
 <span class="cmd">chembl-curator filter-proteins</span> <span class="flag">--curated-dir</span> $DATA <span class="flag">--n-processes</span> 8</pre>
   </div>
 </section>
