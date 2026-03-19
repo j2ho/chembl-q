@@ -318,31 +318,52 @@ def select_decoys(data_dir, max_decoys, seqid_thresh, pocket_rmsd_thresh,
 @click.option('--threads', type=int, default=4, show_default=True,
               help='MMseqs2 thread count')
 @click.option('--external-fasta', multiple=True, type=click.Path(exists=True),
-              help='Optional external FASTA file(s) (PDBbind, BioLip, etc.). '
-                   'IDs must be prefixed with "pdbbind." or "biolip."')
+              help='External FASTA file(s) with dot-prefixed IDs (>{source}.{entry_id}). '
+                   'Bundled PDBbind+BioLip FASTA is used by default.')
+@click.option('--no-external', is_flag=True, default=False,
+              help='Skip bundled external FASTA (ChEMBL-only split)')
 @click.option('--output-dir', type=click.Path(),
               help='Output directory for train.txt/test.txt (default: data-dir)')
 @click.option('--log-level', default='INFO',
               type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']))
-def split(data_dir, seqid, valid_frac, threads, external_fasta, output_dir, log_level):
+def split(data_dir, seqid, valid_frac, threads, external_fasta, no_external,
+          output_dir, log_level):
     """Stage 7: Train/test split by sequence-identity clustering.
 
-    Clusters all passed targets (+ optional external datasets) at the given
-    seqid threshold. Clusters are greedily assigned to train/test while
-    balancing each data source.
+    Clusters all passed targets (+ external datasets) at the given seqid
+    threshold. Clusters are greedily assigned to train/test while balancing
+    each data source.
+
+    By default, the bundled PDBbind+BioLip FASTA is included. Use
+    --no-external for a ChEMBL-only split, or --external-fasta to provide
+    your own file(s).
 
     Requires mmseqs in PATH.
-    Writes train.txt and test.txt with per-entry sampling weights.
     """
+    # Resolve external FASTA: explicit > bundled default > none
+    if external_fasta:
+        fasta_paths = [Path(p) for p in external_fasta]
+    elif no_external:
+        fasta_paths = None
+    else:
+        bundled = Path(__file__).parent / "assets" / "external_targets.fasta"
+        if bundled.exists():
+            fasta_paths = [bundled]
+            click.echo(f"Using bundled external FASTA: {bundled}")
+        else:
+            fasta_paths = None
+            click.echo("Bundled external FASTA not found, running ChEMBL-only split")
+
     splitter = TargetSplitter(seqid=seqid, valid_frac=valid_frac,
                                threads=threads, log_level=log_level)
-    train_path, test_path = splitter.run(
+    train_path, test_path, targets_path = splitter.run(
         Path(data_dir),
-        external_fasta=[Path(p) for p in external_fasta] if external_fasta else None,
+        external_fasta=fasta_paths,
         output_dir=Path(output_dir) if output_dir else None,
     )
-    click.echo(f"Train: {train_path}")
-    click.echo(f"Test:  {test_path}")
+    click.echo(f"Train:   {train_path}")
+    click.echo(f"Test:    {test_path}")
+    click.echo(f"Targets: {targets_path}")
 
 
 if __name__ == '__main__':
