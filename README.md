@@ -22,7 +22,7 @@ All outputs go under a single data directory (e.g. `curated_data_filtered/`).
 
 ### Conda environment (recommended)
 
-conda is the recommended approach — RDKit and nurikit are C++ extension packages that conda resolves cleanly.
+conda is the recommended approach - RDKit and nurikit are C++ extension packages that conda resolves cleanly.
 
 ```bash
 conda create -n chemblq python=3.10
@@ -43,15 +43,13 @@ These are not pip/conda packages and must be installed separately:
 
 | Tool | Required for | Install |
 |------|-------------|---------|
-| **TMalign** | Stage 2 (structure alignment) | [zhanggroup.org/TM-align](https://zhanggroup.org/TM-align/) — place at `./bin/TMalign` |
-| **MMseqs2** | Stages 5, 7 (sequence search/clustering) | [github.com/soedinglab/MMseqs2](https://github.com/soedinglab/MMseqs2) — must be in `PATH` |
+| **MMseqs2** | Stages 5, 7 (sequence search/clustering) | [github.com/soedinglab/MMseqs2](https://github.com/soedinglab/MMseqs2) - must be in `PATH` |
 | `wget` | Stage 2 (AlphaFold download) | usually pre-installed |
 | `pdb_get` | Stage 2 (optional) | local PDB mirror; falls back to RCSB web download |
 
-```bash
-# TMalign setup
-mkdir -p ./bin && ln -s /path/to/TMalign ./bin/TMalign
+> **Note:** Structure alignment (Stages 2, 5) uses `nurikit` (Python TMAlign bindings), which is installed automatically via `pip install -e .`. No separate TMalign binary is needed.
 
+```bash
 # Verify MMseqs2 is in PATH
 mmseqs --help
 ```
@@ -91,7 +89,7 @@ chembl-curator split --data-dir $DATA --valid-frac 0.1
 
 ### Stage 1: `curate`
 
-Extracts and filters ligand–target pairs from ChEMBL.
+Extracts and filters ligand-target pairs from ChEMBL.
 
 ```bash
 chembl-curator curate --download --output curated_data_filtered
@@ -104,7 +102,7 @@ chembl-curator curate --create-config config.json   # generate example config
 - Relations: `=`, `<=`
 - Units: nM, uM (≤ 10 µM)
 - pChEMBL ≥ 5.0, confidence score ≥ 6
-- Heavy atoms: 5–80, valid SMILES required
+- Heavy atoms: 5-80, valid SMILES required
 - Binding assays only (`B`), single protein targets
 
 **Configuration (JSON):**
@@ -182,7 +180,7 @@ chembl-curator receptor-sim --data-dir curated_data_filtered --mode seqid
 | `--workers` | 4 | Processes for pocket RMSD |
 | `--pocket-radius` | 10.0 | Pocket radius in Å |
 
-**Sequence identity:** MMseqs2 all-vs-all → `pairwise_seqid.tsv` (query, target, seqid 0–1)
+**Sequence identity:** MMseqs2 all-vs-all → `pairwise_seqid.tsv` (query, target, seqid 0-1)
 
 **Pocket RMSD:** TM-align full chain → filter to pocket residues within radius → RMSD on ≥3 matched pairs → `pairwise_pocket_rmsd.tsv`
 
@@ -287,12 +285,11 @@ ChEMBL-Q/
 
 ## External Tools & Databases
 
-- [ChEMBL](https://www.ebi.ac.uk/chembl/) — bioactivity database
-- [AlphaFold DB](https://alphafold.ebi.ac.uk/) — predicted protein structures
-- [RCSB PDB](https://www.rcsb.org/) — experimental protein structures
-- [MMseqs2](https://github.com/soedinglab/MMseqs2) — fast sequence search/clustering
-- [TMalign](https://zhanggroup.org/TM-align/) — structure alignment
-- [nuri](https://github.com/seoklab/nurikit) — Python TMalign bindings
+- [ChEMBL](https://www.ebi.ac.uk/chembl/) - bioactivity database
+- [AlphaFold DB](https://alphafold.ebi.ac.uk/) - predicted protein structures
+- [RCSB PDB](https://www.rcsb.org/) - experimental protein structures
+- [MMseqs2](https://github.com/soedinglab/MMseqs2) - fast sequence search/clustering
+- [nurikit](https://github.com/seoklab/nurikit) - Python TMAlign bindings (used for structure alignment)
 
 ## License
 
