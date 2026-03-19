@@ -11,6 +11,8 @@ We filter ChEMBL activity data, select artificial decoys with reasonable compoun
 
 Using just our default setting, you can create the 'ChEMBL-LR' benchmark to test DL models trained on PDBbind and/or BioLip2 dataset wihtout having to worry about target leakage! 
 
+---
+
 ## Pipeline Overview
 
 | Stage | Command | Output |
