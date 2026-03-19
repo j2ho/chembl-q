@@ -1,4 +1,8 @@
-# ChEMBL-Q
+<h1 align="center">ChEMBL-Q</h1>
+
+<p align="center">
+  <a href="https://j2ho.github.io/chembl-q/">Interactive Pipeline Overview</a>
+</p>
 
 A pipeline for curating ChEMBL into a ready-to-use ML screening dataset: compound filtering, protein structure validation, active clustering, decoy selection, and train/test splitting by receptor similarity.
 
