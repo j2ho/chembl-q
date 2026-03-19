@@ -1,11 +1,15 @@
 <div align="center">
   <div>&nbsp;</div>
   <img src="docs/chemblq.png" width="300"/>
-  
+
   <a href="https://j2ho.github.io/chembl-q/">Project Webpage</a>
 </div>
 
-A pipeline for curating ChEMBL into a ready-to-use ML screening dataset: compound filtering, protein structure validation, active clustering, decoy selection, and train/test splitting by receptor similarity.
+A pipeline for curating ChEMBL into a virtual screening dataset for deep-learning model training/validation.
+
+We filter ChEMBL activity data, select artificial decoys with reasonable compound/target criteria. Our pipeline also provides a leakage-resistant train/test splitting by receptor similarity. Using PDBbind+BioLip as default training set, easily replacable with user-custom bulk fasta. 
+
+Using just our default setting, you can create the 'ChEMBL-LR' benchmark to test DL models trained on PDBbind and/or BioLip2 dataset wihtout having to worry about target leakage! 
 
 ## Pipeline Overview
 
