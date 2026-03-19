@@ -1,6 +1,7 @@
 <div align="center">
   <div>&nbsp;</div>
   <img src="docs/chemblq.png" width="300"/>
+  
   <a href="https://j2ho.github.io/chembl-q/">Project Webpage</a>
 </div>
 
