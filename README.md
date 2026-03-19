@@ -208,24 +208,46 @@ Property matching windows: ±50 Da MW, ±2 cLogP, ±50 Å² TPSA, ±2 HBD, ±2 H
 
 ### Stage 7: `split`
 
-Train/test split by sequence-identity clustering (MMseqs2). Greedy assignment balances per-source ratios (ChEMBL, PDBbind, BioLip). Per-entry sampling weight = `1 / log2(cluster_size + 1)`.
+Train/test split by sequence-identity clustering (MMseqs2). Greedy assignment balances per-source ratios. Per-entry sampling weight = `1 / log2(cluster_size + 1)`.
+
+A bundled PDBbind+BioLip FASTA (`chembl_curator/assets/external_targets.fasta`) is included by default.
 
 ```bash
+# Default: includes bundled PDBbind+BioLip sequences
 chembl-curator split --data-dir curated_data_filtered --valid-frac 0.1
 
-# Include external datasets
+# ChEMBL-only split (no external sequences)
+chembl-curator split --data-dir curated_data_filtered --no-external
+
+# Use your own external FASTA
 chembl-curator split --data-dir curated_data_filtered \
-    --external-fasta pdbbind.fasta --external-fasta biolip.fasta \
-    --valid-frac 0.1
+    --external-fasta /path/to/your.fasta
 ```
 
-External FASTA IDs must be prefixed: `>pdbbind.{pdbid}` or `>biolip.{entry}`.
-
-**Output format** (`train.txt` / `test.txt`):
+**External FASTA ID format:** IDs must be dot-prefixed as `>{source}.{entry_id}`, where `source` is any label (e.g. `pdbbind`, `biolip`, `myscreendb`) and `entry_id` is any identifier without spaces. For example:
 ```
-chembl/{uniprot}   {chembl_id}   batch   {weight:.2f}
-pdbbind/{pdbid}    ligand        single  {weight:.2f}
-biolip/{entry}     {ligname}     single  {weight:.2f}
+>pdbbind.1a4k
+MPPYTVVY...
+>biolip.10gs_VWW_A_1
+PYTVVYFP...
+>myscreendb.custom_entry_42
+MKWVTFIS...
+```
+
+**Output: `train.txt` / `test.txt`** (tab-separated, with header):
+```
+source	entry_id	compound	weight
+chembl	A0A0H2UPP7	CHEMBL405346	0.17
+chembl	A0A0H2UPP7	CHEMBL407216	0.17
+biolip	10gs_VWW_A_1	-	0.19
+pdbbind	1a4k	-	0.26
+```
+
+**Output: `chembl_targets.tsv`** (tab-separated, with header):
+```
+uniprot	split	n_actives	n_decoys
+A0A0H2UPP7	train	2	60
+Q9NR56	test	9	270
 ```
 
 ---
@@ -242,6 +264,7 @@ curated_data_filtered/
 ├── passed_targets.txt          # UniProt IDs that passed protein filtering
 ├── train.txt                   # Train split entries with weights
 ├── test.txt                    # Test split entries with weights
+├── chembl_targets.tsv          # Per-target summary (split, n_actives, n_decoys)
 │
 └── {UniProt}/                  # Per-target directory
     ├── actives.tsv             # chembl_id, pchembl, smiles
@@ -273,7 +296,10 @@ ChEMBL-Q/
 │   ├── decoy_selector.py       # Stage 6
 │   ├── splitter.py             # Stage 7
 │   ├── downloader.py
-│   └── filters.py
+│   ├── filters.py
+│   └── assets/
+│       ├── excluded_ligands.txt
+│       └── external_targets.fasta
 ├── example_scripts/
 ├── tests/
 ├── pyproject.toml
