@@ -46,6 +46,7 @@ log "Starting ChEMBL-Q pipeline (${N_CPUS} CPUs, data: ${DATA_DIR})"
 log "Stage 1: compound filtering"
 chembl-curator curate \
     --database "$CHEMBL_DB" \
+    --config config.json \
     --output "$DATA_DIR" \
     --log-level INFO
 

@@ -72,8 +72,8 @@ mmseqs --help
 ```bash
 DATA=curated_data_filtered
 
-# Stage 1: curate compounds from ChEMBL
-chembl-curator curate --download --output $DATA
+# Stage 1: curate compounds from ChEMBL (bundled config.json applies opt-in filters)
+chembl-curator curate --download --config config.json --output $DATA
 
 # Stage 2: validate protein structures and binding sites
 chembl-curator filter-proteins --curated-dir $DATA --n-processes 8
@@ -108,13 +108,22 @@ chembl-curator curate --database /path/to/chembl.db --config config.json --outpu
 chembl-curator curate --create-config config.json   # generate example config
 ```
 
-**Default filters:**
+**Always on (built-in defaults):**
+- Target type: SINGLE PROTEIN
 - Activity types: Ki, Kd, IC50, EC50
 - Relations: `=`, `<=`
-- Units: nM, uM (≤ 10 µM)
-- pChEMBL ≥ 5.0, confidence score ≥ 6
+- Units: nM, uM (< 10,000 nM / < 10 µM)
 - Heavy atoms: 5-80, valid SMILES required
-- Binding assays only (`B`), single protein targets
+- Excludes rows with `data_validity_comment` or `potential_duplicate`
+
+**Opt-in (only applied when `-c config.json` is passed):**
+- `min_pchembl_value: 5.0`
+- `min_confidence_score: 6`
+- `assay_types: ["B"]` (binding only)
+- `bao_formats: ["BAO_0000357"]`
+- `require_standard_flag: true` (curated data only)
+
+The bundled `config.json` at repo root enables all of the opt-in filters — pass it via `--config config.json` to reproduce the shipped dataset.
 
 **Configuration (JSON):**
 ```json

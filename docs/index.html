@@ -336,8 +336,9 @@ footer a { color: #60a5fa; text-decoration: none; }
       <span class="badge" style="background:var(--stage2)">2</span>
       Protein Filtering
     </div>
-    <p class="section-sub">Fetch PDB structures, download AlphaFold models, align via TM-align, and keep only targets
-      with a single, validated binding site.</p>
+    <p class="section-sub">Fetch PDB structures, download AlphaFold models, align via TMalign
+      (through the <code>nurikit</code> Python binding &mdash; no separate TMalign binary needed),
+      and keep only targets with a single, validated binding site.</p>
 
     <div class="two-col">
       <div class="card">
@@ -452,7 +453,7 @@ footer a { color: #60a5fa; text-decoration: none; }
       <span class="badge" style="background:var(--stage5)">5</span>
       Receptor Similarity
     </div>
-    <p class="section-sub">Pairwise receptor similarity via sequence identity (MMseqs2) and pocket RMSD (TM-align + pocket extraction). Used for decoy exclusion and train/test splitting.</p>
+    <p class="section-sub">Pairwise receptor similarity via sequence identity (MMseqs2) and pocket RMSD (TMalign via <code>nurikit</code> + pocket extraction). Used for decoy exclusion and train/test splitting.</p>
 
     <div class="two-col">
       <div class="card">
