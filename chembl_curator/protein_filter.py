@@ -26,6 +26,19 @@ def _load_excluded_ligands() -> set:
 
 EXCLUDED_LIGANDS = _load_excluded_ligands()
 
+# Matches CurationConfig.min_heavy_atoms on the ChEMBL side. Without it a
+# three-atom fragment can define a pocket, and the excluded-code list only
+# catches artifacts it happens to name.
+MIN_LIGAND_HEAVY_ATOMS = 5
+
+# Mean count of target-chain protein heavy atoms within BURIAL_SHELL of each
+# ligand atom. A ligand lying on the surface is not a pocket, and this also
+# removes the copies align_pdb keeps from other chains: it writes every HETATM
+# regardless of chain, and a 53-atom FAD grazing the target with one atom used
+# to pass the contact test and go on to define the pocket.
+BURIAL_SHELL = 8.0
+MIN_BURIAL_NEIGHBOURS = 20.0
+
 
 @dataclass
 class PDBInfo:
@@ -40,6 +53,12 @@ class LigandInfo:
     ligand_name: str
     center: np.ndarray  # 3D coordinates
     chain: str
+    # Heavy-atom coordinates, kept so closest-approach between two ligands can
+    # be measured. Centroid distance alone is contaminated by ligand size.
+    coords: Optional[np.ndarray] = None
+    n_heavy: int = 0
+    burial: float = 0.0      # mean protein heavy atoms within BURIAL_SHELL
+    n_contacts: int = 0      # protein atoms within 4.5 A
 
 
 class ProteinFilter:
@@ -264,6 +283,11 @@ class ProteinFilter:
         """
         ligands = {}  # Key: (ligand_name, chain), Value: list of coords
         protein_coords = {}  # Key: chain, Value: list of heavy atom coords
+        protein_resid = {}   # Key: chain, Value: parallel list of (chain, resseq)
+        # One point per residue for residue-level contact counting: CB, or CA
+        # for glycine. Counting atoms instead would score a large residue as
+        # several contacts and bias the representative-ligand choice.
+        res_rep = {}         # Key: chain, Value: {(chain, resseq): coord}
 
         try:
             with open(pdb_file, 'r') as f:
@@ -280,7 +304,14 @@ class ProteinFilter:
 
                                 if chain not in protein_coords:
                                     protein_coords[chain] = []
+                                    protein_resid[chain] = []
                                 protein_coords[chain].append(np.array([x, y, z]))
+                                protein_resid[chain].append((chain, line[22:27]))
+                                if atom_name in ('CB', 'CA'):
+                                    rk = (chain, line[22:27])
+                                    d = res_rep.setdefault(chain, {})
+                                    if atom_name == 'CB' or rk not in d:
+                                        d[rk] = np.array([x, y, z])
 
                     elif line.startswith('HETATM'):
                         ligand_name = line[17:20].strip()
@@ -325,13 +356,23 @@ class ProteinFilter:
                     has_contact = True
                     break
 
-            if has_contact:
-                center = np.mean(lig_arr, axis=0)
-                ligand_infos.append(LigandInfo(
-                    ligand_name=ligand_name,
-                    center=center,
-                    chain=lig_chain
-                ))
+            if len(lig_arr) < MIN_LIGAND_HEAVY_ATOMS or not has_contact:
+                continue
+
+            burial, contacts = self._burial(
+                lig_arr, prot_trees, target_chains, res_rep)
+            if burial < MIN_BURIAL_NEIGHBOURS:
+                continue
+
+            ligand_infos.append(LigandInfo(
+                ligand_name=ligand_name,
+                center=np.mean(lig_arr, axis=0),
+                chain=lig_chain,
+                coords=lig_arr,
+                n_heavy=len(lig_arr),
+                burial=burial,
+                n_contacts=contacts,
+            ))
 
         return ligand_infos
 
@@ -348,6 +389,11 @@ class ProteinFilter:
         """
         ligands = {}  # Key: (ligand_name, chain), Value: list of coords
         protein_coords = {}  # Key: chain, Value: list of heavy atom coords
+        protein_resid = {}   # Key: chain, Value: parallel list of (chain, resseq)
+        # One point per residue for residue-level contact counting: CB, or CA
+        # for glycine. Counting atoms instead would score a large residue as
+        # several contacts and bias the representative-ligand choice.
+        res_rep = {}         # Key: chain, Value: {(chain, resseq): coord}
 
         try:
             with open(pdb_file, 'r') as f:
@@ -364,7 +410,14 @@ class ProteinFilter:
 
                                 if chain not in protein_coords:
                                     protein_coords[chain] = []
+                                    protein_resid[chain] = []
                                 protein_coords[chain].append(np.array([x, y, z]))
+                                protein_resid[chain].append((chain, line[22:27]))
+                                if atom_name in ('CB', 'CA'):
+                                    rk = (chain, line[22:27])
+                                    d = res_rep.setdefault(chain, {})
+                                    if atom_name == 'CB' or rk not in d:
+                                        d[rk] = np.array([x, y, z])
 
                     elif line.startswith('HETATM'):
                         ligand_name = line[17:20].strip()
@@ -405,12 +458,21 @@ class ProteinFilter:
 
                 # Query: any ligand atom within 4A of any protein atom?
                 dists, _ = prot_trees[target_chain].query(lig_arr, distance_upper_bound=4.0)
+                if len(lig_arr) < MIN_LIGAND_HEAVY_ATOMS:
+                    continue
                 if np.any(np.isfinite(dists)):
-                    center = np.mean(lig_arr, axis=0)
+                    burial, contacts = self._burial(
+                        lig_arr, prot_trees, [target_chain], res_rep)
+                    if burial < MIN_BURIAL_NEIGHBOURS:
+                        continue
                     chain_ligands[target_chain].append(LigandInfo(
                         ligand_name=ligand_name,
-                        center=center,
-                        chain=lig_chain
+                        center=np.mean(lig_arr, axis=0),
+                        chain=lig_chain,
+                        coords=lig_arr,
+                        n_heavy=len(lig_arr),
+                        burial=burial,
+                        n_contacts=contacts,
                     ))
 
         # Remove chains with no ligand contacts
@@ -418,16 +480,73 @@ class ProteinFilter:
 
         return chain_ligands
 
-    def is_single_ligand_bound(self, ligands: List[LigandInfo], distance_threshold: float = 10.0) -> bool:
+    @staticmethod
+    def _same_pocket(a: LigandInfo, b: LigandInfo, max_gap: float) -> bool:
+        """Are two ligands close enough to be occupying one site?
+
+        Uses closest atom-atom approach, not centroid separation. Centroid
+        distance scales with ligand size: in 1T2F the NAD centroid sits 9.96 A
+        from an oxamate whose closest atom is 2.85 A away, stacked against the
+        nicotinamide. Three probe cases (NAD/OXQ, FAD/ML2, 48V/PTR) all had
+        centroid distances of 9.8-10.0 A yet closest approaches of 2.9-3.8 A,
+        while a genuine two-site case (P06700, NCA/XYQ) had a near-identical
+        centroid distance of 9.74 A and a closest approach of 7.29 A. Centroid
+        distance cannot tell those apart; closest approach can.
+
+        Falls back to centroid distance when coordinates are unavailable.
         """
-        Check if structure has single ligand or clustered ligands.
+        if a.coords is None or b.coords is None:
+            return bool(np.linalg.norm(a.center - b.center) <= 10.0)
+        gap = cKDTree(a.coords).query(b.coords)[0].min()
+        return bool(gap <= max_gap)
+
+
+    @staticmethod
+    def _burial(lig_arr, prot_trees, target_chains, res_rep,
+                shell: float = BURIAL_SHELL,
+                res_cut: float = 8.0):
+        """(burial density, number of contacting residues) for one ligand.
+
+        burial is the mean number of protein heavy atoms within `shell` of each
+        ligand atom. A ligand in a cleft is surrounded; one on the surface, or
+        a copy align_pdb carried over from another chain, is not.
+
+        The residue count uses one point per residue (CB, or CA for glycine)
+        rather than every heavy atom, so a tryptophan does not outweigh an
+        alanine simply by having more atoms.
+        """
+        counts, residues = [], set()
+        for chain in target_chains:
+            tree = prot_trees.get(chain)
+            if tree is None:
+                continue
+            counts.append(np.array(
+                [len(x) for x in tree.query_ball_point(lig_arr, r=shell)],
+                dtype=float))
+            reps = res_rep.get(chain) or {}
+            if reps:
+                keys = list(reps)
+                pts = np.stack([reps[k] for k in keys])
+                near = cKDTree(lig_arr).query(pts)[0] <= res_cut
+                residues.update(k for k, ok in zip(keys, near) if ok)
+        if not counts:
+            return 0.0, 0
+        return float(np.sum(counts, axis=0).mean()), len(residues)
+
+    def is_single_ligand_bound(self, ligands: List[LigandInfo],
+                               max_gap: float = 5.0) -> bool:
+        """
+        Check if a structure holds a single ligand or one shared pocket.
 
         Args:
             ligands: List of LigandInfo objects
-            distance_threshold: Maximum distance between ligand centers to be considered clustered
+            max_gap: Maximum closest atom-atom approach (A) for two ligands to
+                count as occupying the same pocket. 5.0 allows van der Waals
+                contact plus slack; a cofactor and its substrate analogue sit
+                at 2.9-3.8 A, separate sites at 7 A and beyond.
 
         Returns:
-            True if single ligand or all ligands are clustered, False otherwise
+            True if single ligand or all ligands share a pocket, False otherwise
         """
         if len(ligands) == 0:
             return False
@@ -435,11 +554,9 @@ class ProteinFilter:
         if len(ligands) == 1:
             return True
 
-        # Check if all ligands are within distance threshold of each other
         for i in range(len(ligands)):
             for j in range(i + 1, len(ligands)):
-                dist = np.linalg.norm(ligands[i].center - ligands[j].center)
-                if dist > distance_threshold:
+                if not self._same_pocket(ligands[i], ligands[j], max_gap):
                     return False
 
         return True
@@ -698,15 +815,24 @@ class ProteinFilter:
             aligned_ligands = self.get_ligands_from_pdb(aligned_pdb, [chain])
 
             if aligned_ligands:
-                for lig in aligned_ligands:
-                    all_ligand_centers.append(lig.center)
-                    pocket_info.append({
-                        'pdb_id': pdb_info.pdb_id,
-                        'chain': chain,
-                        'aligned_file': aligned_pdb.name,
-                        'ligand_name': lig.ligand_name,
-                        'center': lig.center
-                    })
+                # One representative per structure. Downstream code takes the
+                # pocket centre and the chemical environment from this ligand,
+                # so the choice matters: in 1T2F both NAD and its neighbouring
+                # oxamate are present, and NAD is the one that describes the
+                # site. Ranking by contacting residues rather than atom count
+                # also avoids picking a large ligand that barely touches this
+                # chain, which is how a 53-atom FAD with a single contact used
+                # to end up defining a pocket.
+                rep = max(aligned_ligands,
+                          key=lambda l: (l.n_contacts, l.n_heavy))
+                all_ligand_centers.append(rep.center)
+                pocket_info.append({
+                    'pdb_id': pdb_info.pdb_id,
+                    'chain': chain,
+                    'aligned_file': aligned_pdb.name,
+                    'ligand_name': rep.ligand_name,
+                    'center': rep.center
+                })
 
         # Check if all ligands are in same pocket
         is_single_pocket = self.check_same_pocket(all_ligand_centers)
@@ -777,8 +903,11 @@ class ProteinFilter:
                         except ValueError:
                             res_map[pdbid] = 99.0
 
-        best_chain, best_res = None, 99.0
-        for pc in pdbid_chains:
+        # inf, not 99.0: NMR entries report resolution as "-", fall back to 99.0,
+        # and would then fail a "< 99.0" test, silently leaving NMR-only targets
+        # out of best_structure.tsv even though they passed every filter.
+        best_chain, best_res = None, float('inf')
+        for pc in sorted(pdbid_chains):
             pdbid = pc.split('_')[0].upper()
             res = res_map.get(pdbid, 99.0)
             if res < best_res:
