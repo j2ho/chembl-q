@@ -40,14 +40,18 @@ class TargetSplitter:
 
     def __init__(
         self,
-        seqid: float = 0.3,
-        valid_frac: float = 0.1,
+        seqid: float = 0.4,
+        valid_frac: float = 1.0,
         threads: int = 4,
         log_level: str = "INFO",
     ):
         self.seqid = seqid
         self.valid_frac = valid_frac
         self.threads = threads
+        # Filled in by run(): ChEMBL targets with a direct external homologue.
+        self.blocked_targets: Set[str] = set()
+        # Filled in by run(): test targets demoted for train proximity.
+        self.demoted_targets: Set[str] = set()
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(getattr(logging, log_level.upper()))
 
@@ -103,6 +107,126 @@ class TargetSplitter:
                     member_to_rep[member] = rep
         return member_to_rep
 
+    def _find_external_homologues(
+        self, chembl_fasta: Path, external_fasta: Path, tmpdir: Path
+    ) -> Set[str]:
+        """ChEMBL targets with a direct sequence homologue in the external sets.
+
+        Answers the leakage question per target rather than per cluster: does
+        *this* sequence have an external hit at or above self.seqid over at
+        least 80% of its length. Hits shorter than that are domain-level and
+        do not mean a model has seen the target.
+        """
+        hits = tmpdir / "external_hits.tsv"
+        search_tmp = tmpdir / "search_tmp"
+        search_tmp.mkdir(exist_ok=True)
+        subprocess.run(
+            [
+                "mmseqs", "easy-search",
+                str(chembl_fasta), str(external_fasta), str(hits), str(search_tmp),
+                "--threads", str(self.threads),
+                "-s", "7.5",
+                "--format-output", "query,target,fident,alnlen,qlen",
+            ],
+            check=True, capture_output=True,
+        )
+
+        blocked: Set[str] = set()
+        n_rows = 0
+        with open(hits) as f:
+            for line in f:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 5:
+                    continue
+                n_rows += 1
+                try:
+                    fident, alnlen, qlen = float(parts[2]), int(parts[3]), int(parts[4])
+                except ValueError:
+                    continue
+                if fident < self.seqid or alnlen / max(1, qlen) < 0.8:
+                    continue
+                blocked.add(parts[0].split(".", 1)[-1])
+
+        self.logger.info(
+            f"External homologue search: {n_rows} hits, "
+            f"{len(blocked)} ChEMBL targets blocked from test "
+            f"(>={self.seqid} identity over >=80% of the query)"
+        )
+        return blocked
+
+    def _demote_test_targets_close_to_train(
+        self,
+        test_targets: Set[str],
+        train_seq_fasta: Path,
+        chembl_seqs: Dict[str, str],
+        tmpdir: Path,
+    ) -> Set[str]:
+        """Test targets that are still too close to something in train.
+
+        Clustering alone does not guarantee separation. MMseqs easy-cluster is
+        greedy set-cover, so two targets at 45% identity land in different
+        clusters whenever each attaches to a different representative; if one
+        of those clusters is forced to train by an external homologue, the
+        other stays in test and the pair leaks. A direct search after the split
+        found 5 such pairs (all paralogues at 0.41-0.45 identity).
+
+        Runs to a fixed point: demoting a target grows train, which can pull in
+        further test targets. Train only ever grows, so this terminates.
+        """
+        demoted: Set[str] = set()
+        for round_no in range(1, 11):
+            remaining = test_targets - demoted
+            if not remaining:
+                break
+            query = tmpdir / f"test_round{round_no}.fasta"
+            with open(query, 'w') as f:
+                for t in sorted(remaining):
+                    if t in chembl_seqs:
+                        f.write(f">{t}\n{chembl_seqs[t]}\n")
+
+            db = tmpdir / f"train_round{round_no}.fasta"
+            with open(db, 'w') as f:
+                f.write(train_seq_fasta.read_text())
+                for t in sorted(demoted):
+                    if t in chembl_seqs:
+                        f.write(f">demoted.{t}\n{chembl_seqs[t]}\n")
+
+            hits = tmpdir / f"demote_hits{round_no}.tsv"
+            search_tmp = tmpdir / f"demote_tmp{round_no}"
+            search_tmp.mkdir(exist_ok=True)
+            subprocess.run(
+                [
+                    "mmseqs", "easy-search",
+                    str(query), str(db), str(hits), str(search_tmp),
+                    "--threads", str(self.threads), "-s", "7.5",
+                    "--max-seqs", "20000", "-e", "10000",
+                    "--format-output", "query,target,fident,alnlen,qlen",
+                ],
+                check=True, capture_output=True,
+            )
+
+            new: Set[str] = set()
+            with open(hits) as f:
+                for line in f:
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) < 5:
+                        continue
+                    try:
+                        fident, alnlen, qlen = (
+                            float(parts[2]), int(parts[3]), int(parts[4]))
+                    except ValueError:
+                        continue
+                    if fident >= self.seqid and alnlen / max(1, qlen) >= 0.8:
+                        new.add(parts[0])
+            if not new:
+                break
+            demoted |= new
+            self.logger.info(
+                f"Separation round {round_no}: demoted {len(new)} test targets "
+                f"within {self.seqid} identity of train ({len(demoted)} total)"
+            )
+        return demoted
+
     # -- Generic source parsing ------------------------------------------------
 
     @staticmethod
@@ -118,7 +242,58 @@ class TargetSplitter:
     def _greedy_split(
         self, cluster_groups: Dict[str, Set[str]]
     ) -> Tuple[Set[str], Set[str]]:
-        """Assign clusters to train/test, balancing per-source ratios."""
+        """Assign clusters to train/test.
+
+        A cluster may go to test only if every member is a ChEMBL target *and*
+        no member has a direct external homologue (see blocked_targets). The
+        point of the test set is to benchmark models trained on PDBbind and
+        BioLiP without retraining them, so a test target with an external
+        homologue has already been seen and cannot measure generalisation.
+        Everything else is forced to train, whatever that does to source ratios.
+
+        Cluster membership alone is the wrong test. MMseqs clustering is greedy
+        set-cover, so members are similar to the representative and not
+        necessarily to each other: blocking on cluster composition rejected 311
+        of 1,317 targets that have no external sequence above the cutoff at all.
+        blocked_targets comes from a direct search instead.
+
+        Note this enforces *sequence*-level separation only. Pocket similarity
+        against the external sets is not checked here, and the two barely
+        overlap: of 3,073 pocket-similar ChEMBL pairs only 107 are also caught
+        by sequence identity. Test targets can still share a pocket with a
+        PDBbind or BioLiP entry.
+        """
+        blocked = self.blocked_targets or set()
+        eligible = {
+            rep for rep, members in cluster_groups.items()
+            if all(self._parse_source(m) == "chembl" for m in members)
+            and not any(m.split(".", 1)[-1] in blocked for m in members)
+        }
+        forced_train = set(cluster_groups) - eligible
+        n_blocked_targets = sum(
+            sum(1 for m in cluster_groups[rep] if self._parse_source(m) == "chembl")
+            for rep in forced_train
+        )
+        self.logger.info(
+            f"Test-eligible clusters (ChEMBL-only): {len(eligible)}; "
+            f"{len(forced_train)} clusters forced to train, holding "
+            f"{n_blocked_targets} ChEMBL targets that share a cluster with "
+            "PDBbind or BioLiP"
+        )
+        if not eligible:
+            raise RuntimeError(
+                "No ChEMBL-only clusters: every target clusters with an external "
+                "entry, so no test set can be built. Lower --seqid or drop "
+                "--external-fasta."
+            )
+
+        # Balance only over the eligible clusters; the rest are already placed.
+        # Keep the full grouping around so the closing tally can count them:
+        # reporting only the eligible subset makes it look as though the forced
+        # clusters vanished, when they are simply already assigned to train.
+        all_groups = cluster_groups
+        cluster_groups = {rep: cluster_groups[rep] for rep in eligible}
+
         # Discover all sources present
         all_sources: Set[str] = set()
         for members in cluster_groups.values():
@@ -172,14 +347,26 @@ class TargetSplitter:
                 for s in sources:
                     cur_valid[s] += c.get(s, 0)
 
+        train_reps |= forced_train
         self.logger.info(
-            f"Train clusters: {len(train_reps)}, test clusters: {len(valid_reps)}"
+            f"Train clusters: {len(train_reps)} "
+            f"({len(forced_train)} of them forced by external overlap), "
+            f"test clusters: {len(valid_reps)}"
+        )
+        final_train: Dict[str, int] = defaultdict(int)
+        final_valid: Dict[str, int] = defaultdict(int)
+        for rep, members in all_groups.items():
+            bucket = final_valid if rep in valid_reps else final_train
+            for m in members:
+                bucket[self._parse_source(m)] += 1
+        all_sources_final = sorted(set(final_train) | set(final_valid))
+        self.logger.info(
+            "Actual train: "
+            + ", ".join(f"{s}={final_train[s]}" for s in all_sources_final)
         )
         self.logger.info(
-            "Actual train: " + ", ".join(f"{s}={cur_train[s]}" for s in sources)
-        )
-        self.logger.info(
-            "Actual test:  " + ", ".join(f"{s}={cur_valid[s]}" for s in sources)
+            "Actual test:  "
+            + ", ".join(f"{s}={final_valid[s]}" for s in all_sources_final)
         )
         return train_reps, valid_reps
 
@@ -256,19 +443,61 @@ class TargetSplitter:
 
             member_to_rep = self._run_mmseqs_cluster(combined, td)
 
-        # Group members by representative
-        cluster_groups: Dict[str, Set[str]] = defaultdict(set)
-        for member, rep in member_to_rep.items():
-            cluster_groups[rep].add(member)
+            if ext_seqs:
+                ext_fasta = td / "external.fasta"
+                with open(ext_fasta, 'w') as f:
+                    for sid, seq in ext_seqs.items():
+                        f.write(f">{sid}\n{seq}\n")
+                chembl_only = td / "chembl.fasta"
+                with open(chembl_only, 'w') as f:
+                    for sid, seq in chembl_seqs.items():
+                        f.write(f">chembl.{sid}\n{seq}\n")
+                self.blocked_targets = self._find_external_homologues(
+                    chembl_only, ext_fasta, td
+                )
 
-        sizes = [len(v) for v in cluster_groups.values()]
-        self.logger.info(
-            f"Clusters: {len(cluster_groups)}, "
-            f"sizes min={min(sizes)} max={max(sizes)} "
-            f"median={sorted(sizes)[len(sizes)//2]}"
-        )
+            # Group members by representative
+            cluster_groups: Dict[str, Set[str]] = defaultdict(set)
+            for member, rep in member_to_rep.items():
+                cluster_groups[rep].add(member)
 
-        _, valid_reps = self._greedy_split(cluster_groups)
+            sizes = [len(v) for v in cluster_groups.values()]
+            self.logger.info(
+                f"Clusters: {len(cluster_groups)}, "
+                f"sizes min={min(sizes)} max={max(sizes)} "
+                f"median={sorted(sizes)[len(sizes)//2]}"
+            )
+
+            _, valid_reps = self._greedy_split(cluster_groups)
+
+            # Clustering is not a separation guarantee; check it directly.
+            test_targets = {
+                m.split(".", 1)[1]
+                for rep in valid_reps
+                for m in cluster_groups[rep]
+                if m.startswith("chembl.")
+            }
+            train_fasta = td / "train_side.fasta"
+            with open(train_fasta, 'w') as f:
+                for sid, seq in ext_seqs.items():
+                    f.write(f">{sid}\n{seq}\n")
+                for rep in cluster_groups:
+                    if rep in valid_reps:
+                        continue
+                    for m in cluster_groups[rep]:
+                        if m.startswith("chembl."):
+                            t = m.split(".", 1)[1]
+                            if t in chembl_seqs:
+                                f.write(f">chembltrain.{t}\n{chembl_seqs[t]}\n")
+            self.demoted_targets = self._demote_test_targets_close_to_train(
+                test_targets, train_fasta, chembl_seqs, td
+            )
+            if self.demoted_targets:
+                self.logger.info(
+                    f"Demoted {len(self.demoted_targets)} test targets to train "
+                    f"for being within {self.seqid} identity of a train sequence "
+                    "despite landing in a ChEMBL-only cluster"
+                )
 
         # Per-member sampling weights
         member_weight: Dict[str, float] = {}
@@ -319,7 +548,7 @@ class TargetSplitter:
             clu_key = f"chembl.{uniprot}"
             rep = member_to_rep.get(clu_key, clu_key)
             w = member_weight.get(clu_key, 1.0)
-            is_test = rep in valid_reps
+            is_test = rep in valid_reps and uniprot not in self.demoted_targets
 
             for active_id in chembl_actives[uniprot]:
                 line = f"chembl\t{uniprot}\t{active_id}\t{w:.2f}"
