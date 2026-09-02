@@ -35,7 +35,14 @@ chembl_data/
 curated_data/
 curated_chembl/
 curated_data_filtered/
+curated_v2/
+curated_v3/
 test_curated/
+
+# Derived reference sets and scratch inspection output
+external_ligands/
+pocket_inspection/
+raw-materials-html/
 
 # Per-run outputs / logs
 log.out
