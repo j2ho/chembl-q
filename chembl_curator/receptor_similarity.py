@@ -8,9 +8,22 @@ Two independent computations:
    Input:  sequences.fasta (written by protein_filter.py)
    Output: pairwise_seqid.tsv  (query, target, seqid)
 
-2. Pocket RMSD (nuri TMalign, all-vs-all)
+2. Pocket RMSD (all-vs-all), by one of two methods
    Input:  best_structure.tsv + aligned/*.pdb + pocket_info.csv
-   Output: pairwise_pocket_rmsd.tsv  (target_a, target_b, tm_score, pocket_rmsd, n_matched)
+   Output: pairwise_pocket_rmsd.tsv  (target_a, target_b, tm_score,
+           pocket_rmsd, n_matched, n_pocket_a, n_pocket_b)
+           The pocket sizes are there so a coverage ratio can be formed:
+           n_matched alone cannot tell 20-of-22 from 20-of-90.
+
+   "tmalign"   nuri TM-align global superposition, pocket residues taken as
+               the Ca atoms within pocket_radius of the ligand centroid. The
+               residue pairing is sequence-ordered, so pockets built from the
+               same residues in a different order, or in a different fold,
+               cannot match.
+   "hungarian" order-free matching from pocket_align, pocket residues taken
+               as any residue with a heavy atom within pocket_radius of a
+               ligand heavy atom. tm_score is reported as -1.0 because no
+               global superposition is computed.
 """
 
 import csv
@@ -26,6 +39,15 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .pocket_align import aligned_rmsd, pocket_from_structure
+
+# Backbone/heavy-atom parsing constants for the Hungarian pocket path.
+_STANDARD_RESIDUES = frozenset({
+    "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE",
+    "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
+    "MSE",
+})
+
 
 # ── Multiprocessing workers (must be module-level for pickling) ───────────────
 
@@ -38,11 +60,12 @@ def _suppress_stderr() -> None:
 
 def _pocket_rmsd_worker(
     args: Tuple,
-) -> Tuple[str, str, float, float, int]:
+) -> Tuple[str, str, float, float, int, int, int]:
     """Compute pocket RMSD for one target pair.
 
     args: (target_a, target_b, ca_a, ca_b, pocket_idx_a, pocket_idx_b)
-    Returns: (target_a, target_b, tm_score, pocket_rmsd, n_matched)
+    Returns: (target_a, target_b, tm_score, pocket_rmsd, n_matched,
+              n_pocket_a, n_pocket_b)
              pocket_rmsd = -1.0 when alignment is invalid or pocket too small.
     """
     import nuri._log_interface
@@ -50,18 +73,19 @@ def _pocket_rmsd_worker(
     from nuri.tools.tm import TMAlign
 
     ta, tb, ca_a, ca_b, pidx_a, pidx_b = args
+    na, nb = len(pidx_a), len(pidx_b)
 
     if len(ca_a) < 5 or len(ca_b) < 5:
-        return (ta, tb, -1.0, -1.0, 0)
+        return (ta, tb, -1.0, -1.0, 0, na, nb)
 
     try:
         tma = TMAlign(ca_a, ca_b)
         xform, tm_score = tma.score()
     except (ValueError, RuntimeError):
-        return (ta, tb, -1.0, -1.0, 0)
+        return (ta, tb, -1.0, -1.0, 0, na, nb)
 
     if len(pidx_a) == 0 or len(pidx_b) == 0:
-        return (ta, tb, float(tm_score), -1.0, 0)
+        return (ta, tb, float(tm_score), -1.0, 0, na, nb)
 
     # Residue-level alignment from TM-align
     aligned = tma.aligned_pairs()
@@ -75,7 +99,7 @@ def _pocket_rmsd_worker(
     n_matched = len(pocket_pairs)
 
     if n_matched < 3:
-        return (ta, tb, float(tm_score), -1.0, n_matched)
+        return (ta, tb, float(tm_score), -1.0, n_matched, na, nb)
 
     pairs = np.array(pocket_pairs)
     # Apply xform (4×4 homogeneous) to query pocket Cα, then RMSD vs template
@@ -86,7 +110,79 @@ def _pocket_rmsd_worker(
     Q = ca_b[pairs[:, 1]]
     rmsd = float(np.sqrt(np.mean(np.sum((P - Q) ** 2, axis=1))))
 
-    return (ta, tb, float(tm_score), rmsd, n_matched)
+    return (ta, tb, float(tm_score), rmsd, n_matched, na, nb)
+
+
+def _hungarian_worker(
+    args: Tuple,
+) -> Tuple[str, str, float, float, int, int, int]:
+    """Order-free pocket RMSD for one target pair.
+
+    args: (target_a, target_b, pocket_a, pocket_b)
+    Returns the same 7-tuple shape as _pocket_rmsd_worker so both methods
+    write an identical TSV. tm_score is -1.0 here: no global superposition is
+    computed, and reporting a fake one would be worse than admitting the gap.
+
+    The two pocket sizes are reported so downstream code can form a coverage
+    ratio. n_matched alone cannot separate "20 of 22 residues aligned" from
+    "20 of 90", and those are very different claims about two pockets.
+    """
+    ta, tb, pa, pb = args
+    na, nb = len(pa), len(pb)
+    try:
+        n_matched, rmsd = aligned_rmsd(pa, pb)
+    except (ValueError, np.linalg.LinAlgError):
+        return (ta, tb, -1.0, -1.0, 0, na, nb)
+    return (ta, tb, -1.0, float(rmsd), int(n_matched), na, nb)
+
+
+def parse_structure_residues(pdb_path: Path, ligand_name: str):
+    """Read one aligned PDB into (protein residues, ligand heavy atoms).
+
+    Residues come back as (residue_name, CA coordinate, heavy-atom array),
+    which is what pocket_from_structure expects. Hydrogens and alternate
+    locations other than the first are dropped.
+    """
+    residues: Dict[Tuple[str, str], list] = {}
+    ca: Dict[Tuple[str, str], np.ndarray] = {}
+    names: Dict[Tuple[str, str], str] = {}
+    ligand: list = []
+
+    with open(pdb_path, errors="replace") as fh:
+        for line in fh:
+            if len(line) < 54:
+                continue
+            record = line[:6]
+            if record not in ("ATOM  ", "HETATM"):
+                continue
+            if line[16] not in " A":          # altloc
+                continue
+            atom = line[12:16].strip().upper()
+            element = line[76:78].strip().upper() if len(line) >= 78 else ""
+            if element == "H" or (not element and atom.startswith("H")):
+                continue
+            try:
+                xyz = np.array([float(line[30:38]), float(line[38:46]),
+                                float(line[46:54])])
+            except ValueError:
+                continue
+
+            resname = line[17:20].strip()
+            if record == "ATOM  " and resname in _STANDARD_RESIDUES:
+                key = (line[21], line[22:27])
+                residues.setdefault(key, []).append(xyz)
+                names[key] = resname
+                if atom == "CA":
+                    ca[key] = xyz
+            elif record == "HETATM" and resname == ligand_name:
+                ligand.append(xyz)
+
+    parsed = [
+        (names[key], ca[key], np.stack(atoms))
+        for key, atoms in residues.items()
+        if key in ca
+    ]
+    return parsed, np.asarray(ligand, dtype=float)
 
 
 # ── Main class ────────────────────────────────────────────────────────────────
@@ -196,20 +292,29 @@ class ReceptorSimilarity:
         pocket_radius: float = 10.0,
         workers: int = 4,
         output: Optional[Path] = None,
+        method: str = "tmalign",
     ) -> Path:
-        """Compute all-vs-all pocket RMSD using nuri TMalign.
+        """Compute all-vs-all pocket RMSD.
 
         Args:
             data_dir: Root data directory.
             best_structure_tsv: TSV mapping uniprot → pdbid_chain
                 (default: data_dir/best_structure.tsv).
-            pocket_radius: Cα atoms within this radius of ligand center define the pocket.
+            pocket_radius: Pocket cutoff. For "tmalign" this is measured from
+                the ligand centroid to Cα; for "hungarian" it is measured from
+                every ligand heavy atom to every residue heavy atom, so a
+                smaller value (8 Å) is the comparable setting.
             workers: Number of parallel worker processes.
             output: Output TSV path (default: data_dir/pairwise_pocket_rmsd.tsv).
+            method: "tmalign" for the sequence-ordered global superposition, or
+                "hungarian" for order-free matching (see pocket_align).
 
         Returns:
             Path to output TSV.
         """
+        if method not in ("tmalign", "hungarian"):
+            raise ValueError(f"unknown pocket method: {method}")
+
         import nuri
         import nuri._log_interface
         nuri._log_interface.set_log_level(4)
@@ -236,16 +341,31 @@ class ReceptorSimilarity:
                 if len(parts) >= 2:
                     beststr[parts[0]] = parts[1]
 
-        self.logger.info(f"Pre-loading structures for {len(beststr)} targets")
+        self.logger.info(
+            f"Pre-loading structures for {len(beststr)} targets (method={method})"
+        )
         t0 = time.time()
 
-        target_data: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+        target_data: Dict[str, Tuple] = {}
         skipped: List[Tuple[str, str]] = []
 
         for uniprot, pdbid_chain in beststr.items():
             pdb_path = data_dir / uniprot / "aligned" / f"{pdbid_chain}.pdb"
             if not pdb_path.exists():
                 skipped.append((uniprot, 'pdb_missing'))
+                continue
+
+            if method == "hungarian":
+                lig_name = self._get_lig_name(data_dir / uniprot, pdbid_chain)
+                if lig_name is None:
+                    skipped.append((uniprot, 'no_lig_name'))
+                    continue
+                residues, ligand_xyz = parse_structure_residues(pdb_path, lig_name)
+                pocket = pocket_from_structure(residues, ligand_xyz, pocket_radius)
+                if pocket is None:
+                    skipped.append((uniprot, 'empty_pocket'))
+                    continue
+                target_data[uniprot] = (pocket,)
                 continue
 
             ca = self._extract_ca(pdb_path, nuri)
@@ -274,11 +394,19 @@ class ReceptorSimilarity:
             f"(skipped {len(skipped)}) in {time.time()-t0:.1f}s"
         )
 
-        pair_args = [
-            (ta, tb, target_data[ta][0], target_data[tb][0],
-             target_data[ta][1], target_data[tb][1])
-            for ta, tb in combinations(valid, 2)
-        ]
+        if method == "hungarian":
+            worker = _hungarian_worker
+            pair_args = [
+                (ta, tb, target_data[ta][0], target_data[tb][0])
+                for ta, tb in combinations(valid, 2)
+            ]
+        else:
+            worker = _pocket_rmsd_worker
+            pair_args = [
+                (ta, tb, target_data[ta][0], target_data[tb][0],
+                 target_data[ta][1], target_data[tb][1])
+                for ta, tb in combinations(valid, 2)
+            ]
 
         self.logger.info(f"Computing pocket RMSD ({workers} workers)...")
         t0 = time.time()
@@ -295,11 +423,10 @@ class ReceptorSimilarity:
         ):
             pw = csv.writer(pf, delimiter='\t')
             pw.writerow(
-                ['target_a', 'target_b', 'tm_score', 'pocket_rmsd', 'n_matched']
+                ['target_a', 'target_b', 'tm_score', 'pocket_rmsd',
+                 'n_matched', 'n_pocket_a', 'n_pocket_b']
             )
-            for row in pool.imap_unordered(
-                _pocket_rmsd_worker, pair_args, chunksize=256
-            ):
+            for row in pool.imap_unordered(worker, pair_args, chunksize=256):
                 results.append(row)
                 pw.writerow(row)
                 done += 1
@@ -324,7 +451,8 @@ class ReceptorSimilarity:
         with open(output, 'w', newline='') as f:
             writer = csv.writer(f, delimiter='\t')
             writer.writerow(
-                ['target_a', 'target_b', 'tm_score', 'pocket_rmsd', 'n_matched']
+                ['target_a', 'target_b', 'tm_score', 'pocket_rmsd',
+                 'n_matched', 'n_pocket_a', 'n_pocket_b']
             )
             for row in results:
                 writer.writerow(row)
@@ -354,6 +482,20 @@ class ReceptorSimilarity:
             if a.name.strip() == 'CA' and a.element_symbol == 'C':
                 ca.append(a.get_pos(0))
         return np.array(ca) if ca else np.empty((0, 3))
+
+    def _get_lig_name(
+        self, target_dir: Path, pdbid_chain: str
+    ) -> Optional[str]:
+        """Ligand residue code for the given aligned structure, from pocket_info.csv."""
+        pocket_csv = target_dir / "pocket_info.csv"
+        if not pocket_csv.exists():
+            return None
+        pdbid, chain = pdbid_chain.split('_', 1)
+        with open(pocket_csv) as f:
+            for row in csv.DictReader(f):
+                if row['PDB_ID'].upper() == pdbid.upper() and row['Chain'] == chain:
+                    return row['Ligand_Name']
+        return None
 
     def _get_lig_center(
         self, target_dir: Path, pdbid_chain: str
@@ -389,6 +531,8 @@ class ReceptorSimilarity:
         seqid_threads: int = 4,
         workers: int = 4,
         pocket_radius: float = 10.0,
+        pocket_method: str = "tmalign",
+        pocket_output: Optional[Path] = None,
     ) -> dict:
         """Run receptor similarity computation.
 
@@ -410,6 +554,7 @@ class ReceptorSimilarity:
             )
         if mode in ("pocket", "both"):
             results['pocket_rmsd_tsv'] = self.compute_pocket_rmsd(
-                data_dir, pocket_radius=pocket_radius, workers=workers
+                data_dir, pocket_radius=pocket_radius, workers=workers,
+                method=pocket_method, output=pocket_output,
             )
         return results
