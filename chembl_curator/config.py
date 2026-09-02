@@ -39,7 +39,13 @@ class CurationConfig:
 
     # Activity value filters
     min_pchembl_value: float = None      # Minimum pChEMBL value (-log10 molar activity)
-    
+
+    # Negative (inactive) extraction
+    extract_negatives: bool = True       # Emit inactives.tsv / measured.tsv / conflicts.tsv
+    active_max_nm: float = 10000.0       # Exact measurement at or below this is active
+    inactive_min_nm: float = 100000.0    # Censored ">" at or above this is inactive
+    conflict_decisive_nm: float = 1000.0 # Potency that overrides a contradicting inactive call
+
     def __post_init__(self):
         """Set default values"""
         if self.activity_thresholds is None:
