@@ -114,10 +114,17 @@ def curate(database, output, download, config, create_config, activity_types, re
               help='Number of parallel processes (default: 1)')
 @click.option('--max-chain-residues', default=1500, type=int,
               help='Skip PDB structures whose target chain exceeds this many residues (0 = no limit)')
+@click.option('--cache-dir', type=click.Path(),
+              help='Shared structure cache reused across runs '
+                   '(default: pdb_cache/ beside the curated dir)')
+@click.option('--use-local-mirror', is_flag=True, default=False,
+              help='Try a site-local pdb_get before the network. Off by '
+                   'default so the released path is the one exercised.')
 @click.option('--log-level', default='INFO',
               type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']))
 @with_logging
-def filter_proteins(curated_dir, n_processes, max_chain_residues, log_level):
+def filter_proteins(curated_dir, n_processes, max_chain_residues,
+                    cache_dir, use_local_mirror, log_level):
     """
     Filter protein structures based on PDB availability and binding site analysis.
 
@@ -136,7 +143,10 @@ def filter_proteins(curated_dir, n_processes, max_chain_residues, log_level):
         curated_dir=Path(curated_dir),
         log_level=log_level,
         max_chain_residues=max_chain_residues,
+        cache_dir=Path(cache_dir) if cache_dir else None,
+        use_local_mirror=use_local_mirror,
     )
+    click.echo(f"Structure cache: {protein_filter.cache_dir}")
 
     passed_targets = protein_filter.run_pipeline(n_processes=n_processes)
 

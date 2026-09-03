@@ -67,16 +67,32 @@ class ProteinFilter:
     """Filter protein structures based on PDB availability and binding site analysis."""
 
     def __init__(self, curated_dir: Path, log_level: str = "INFO",
-                 max_chain_residues: int = 1500):
+                 max_chain_residues: int = 1500,
+                 cache_dir: Optional[Path] = None,
+                 use_local_mirror: bool = False):
         """
         Args:
             curated_dir: Directory containing target subdirectories (uniprot IDs)
             log_level: Logging level
+            cache_dir: Shared structure cache, reused across runs. Defaults to
+                a pdb_cache/ beside curated_dir. Structures are downloaded once
+                and copied from there afterwards; a run that filters differently
+                no longer re-fetches everything, and the ~4,400 targets that
+                fail stage 2 no longer have their structures downloaded and
+                then deleted with the target directory on every run.
+            use_local_mirror: Try the site-local `pdb_get` before the network.
+                Off by default: it exists on this cluster but nowhere a
+                released pipeline would run, and silently preferring it makes
+                the default path the one that is never exercised.
             max_chain_residues: Skip PDB structures whose target chain exceeds
                 this many residues (catches ribosomes, nanodiscs, etc.). 0 = no limit.
         """
         self.curated_dir = Path(curated_dir)
         self.max_chain_residues = max_chain_residues
+        self.cache_dir = Path(cache_dir) if cache_dir else (
+            self.curated_dir.parent / "pdb_cache")
+        self.use_local_mirror = use_local_mirror
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(getattr(logging, log_level.upper()))
 
@@ -146,65 +162,97 @@ class ProteinFilter:
                 f.write(f"{pdb.pdb_id}  {pdb.method}  {pdb.resolution}  {pdb.chains}\n")
 
     def download_pdb(self, pdb_id: str, output_dir: Path) -> bool:
-        """
-        Download PDB file using pdb_get command (if available) or RCSB web download.
+        """Put a PDB-format structure in output_dir, from cache or the network.
+
+        Resolution order: the shared cache, then the site-local mirror if the
+        caller opted in, then RCSB in PDB format, then RCSB in mmCIF converted
+        to PDB. Anything fetched is stored in the cache, and a structure RCSB
+        holds in neither format is recorded as a miss so later runs stop
+        retrying it.
 
         Args:
             pdb_id: PDB ID to download
-            output_dir: Directory to save PDB file
+            output_dir: Directory to place the structure in
 
         Returns:
-            True if successful, False otherwise
+            True if the structure is available in output_dir
         """
         pdb_file = output_dir / f"{pdb_id.lower()}.pdb"
 
-        # Method 1: Try pdb_get (fast if available on cluster)
-        if shutil.which('pdb_get'):
-            try:
-                result = subprocess.run(
-                    ['pdb_get', pdb_id],
-                    cwd=output_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=60
-                )
+        if self._copy_from_cache(pdb_id, output_dir):
+            return True
+        if self._cache_path(pdb_id, ".miss").exists():
+            self.logger.debug(f"{pdb_id} previously unavailable; not retrying")
+            return False
 
-                # Check if PDB file was created
+        if self.use_local_mirror and shutil.which('pdb_get'):
+            try:
+                subprocess.run(['pdb_get', pdb_id], cwd=output_dir,
+                               capture_output=True, text=True, timeout=60)
+                if not pdb_file.exists():
+                    found = list(output_dir.glob(f"*{pdb_id.lower()}*"))
+                    if found:
+                        found[0].rename(pdb_file)
                 if pdb_file.exists():
                     self.logger.debug(f"Downloaded {pdb_id} using pdb_get")
+                    self._store_in_cache(pdb_id, output_dir)
                     return True
-
-                # pdb_get might create files with different naming
-                pdb_files = list(output_dir.glob(f"*{pdb_id.lower()}*"))
-                if pdb_files:
-                    # Rename to standard format
-                    pdb_files[0].rename(pdb_file)
-                    self.logger.debug(f"Downloaded {pdb_id} using pdb_get")
-                    return True
-
             except Exception as e:
-                self.logger.debug(f"pdb_get failed for {pdb_id}: {e}, trying web download")
+                self.logger.debug(f"pdb_get failed for {pdb_id}: {e}")
 
-        # Method 2: Download from RCSB PDB (fallback or if pdb_get not available)
         try:
             url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
-            self.logger.debug(f"Downloading {pdb_id} from RCSB: {url}")
-
             response = requests.get(url, timeout=30)
             response.raise_for_status()
-
-            with open(pdb_file, 'w') as f:
-                f.write(response.text)
-
-            if pdb_file.exists() and pdb_file.stat().st_size > 0:
+            pdb_file.write_text(response.text)
+            if pdb_file.stat().st_size > 0:
                 self.logger.debug(f"Downloaded {pdb_id} from RCSB")
+                self._store_in_cache(pdb_id, output_dir)
                 return True
-
-            return self._download_mmcif(pdb_id, output_dir)
-
         except Exception as e:
             self.logger.debug(f"No PDB format for {pdb_id} ({e}); trying mmCIF")
-            return self._download_mmcif(pdb_id, output_dir)
+
+        if self._download_mmcif(pdb_id, output_dir):
+            self._store_in_cache(pdb_id, output_dir)
+            return True
+
+        self._cache_path(pdb_id, ".miss").touch()
+        return False
+
+    def _cache_path(self, pdb_id: str, suffix: str) -> Path:
+        return self.cache_dir / f"{pdb_id.lower()}{suffix}"
+
+    def _copy_from_cache(self, pdb_id: str, output_dir: Path) -> bool:
+        """Copy a cached structure and its sidecar into output_dir."""
+        cached = self._cache_path(pdb_id, ".pdb")
+        if not cached.exists() or cached.stat().st_size == 0:
+            return False
+        try:
+            shutil.copy2(cached, output_dir / f"{pdb_id.lower()}.pdb")
+            side = self._cache_path(pdb_id, ".modres")
+            if side.exists():
+                shutil.copy2(side, output_dir / f"{pdb_id.lower()}.modres")
+        except OSError as e:
+            self.logger.warning(f"Cache copy failed for {pdb_id}: {e}")
+            return False
+        return True
+
+    def _store_in_cache(self, pdb_id: str, output_dir: Path) -> None:
+        """Keep a fetched structure so the next run does not fetch it again.
+
+        Matters most for the targets stage 2 rejects: their directories are
+        deleted at the end of the run, taking the structures with them, so
+        without a cache every run re-downloads several thousand structures it
+        is going to throw away.
+        """
+        for suffix in (".pdb", ".modres"):
+            src = output_dir / f"{pdb_id.lower()}{suffix}"
+            dst = self._cache_path(pdb_id, suffix)
+            if src.exists() and not dst.exists():
+                try:
+                    shutil.copy2(src, dst)
+                except OSError as e:
+                    self.logger.debug(f"Cache store failed for {pdb_id}: {e}")
 
     def _download_mmcif(self, pdb_id: str, output_dir: Path) -> bool:
         """Fetch mmCIF and convert to PDB, since RCSB stopped shipping PDB files.
