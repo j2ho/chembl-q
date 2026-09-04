@@ -38,6 +38,11 @@ dependencies = [
     "nurikit>=0.1.0a16",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
 [project.scripts]
 chembl-curator = "chembl_curator.cli:cli"
 

@@ -1,63 +1,38 @@
 #!/usr/bin/env python3
-"""Test RCSB web download (fallback mechanism)."""
+"""Test the RCSB web route, which is the only one a released install has."""
 
 import tempfile
-import shutil
 from pathlib import Path
 from unittest.mock import patch
 from chembl_curator import ProteinFilter
 
-def test_rcsb_download():
-    """Test downloading from RCSB (simulating pdb_get not available)."""
+RECORD_STARTS = ("HEADER", "ATOM", "HETATM", "REMARK")
 
+
+def test_rcsb_download():
+    """With the site-local mirror hidden, the network path must still work.
+
+    This is the route every user outside this machine takes, so it is worth
+    exercising even though pdb_get happens to be installed here.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
+        pdb_id = "1ATP"
 
-        test_pdb_id = "1ATP"
+        pf = ProteinFilter(curated_dir=tmpdir, log_level="ERROR")
+        with patch("shutil.which", return_value=None):
+            success = pf.download_pdb(pdb_id, tmpdir)
 
-        print(f"Testing RCSB web download for {test_pdb_id}...")
-        print(f"Temporary directory: {tmpdir}")
+        assert success, "RCSB fallback failed with pdb_get unavailable"
 
-        # Create ProteinFilter instance
-        pf = ProteinFilter(curated_dir=tmpdir, log_level="DEBUG")
+        out = tmpdir / f"{pdb_id.lower()}.pdb"
+        assert out.exists(), f"download reported success but {out.name} is missing"
 
-        # Mock shutil.which to return None (simulating pdb_get not available)
-        with patch('shutil.which', return_value=None):
-            print("Simulating pdb_get NOT available...")
-            success = pf.download_pdb(test_pdb_id, tmpdir)
+        head = out.read_text().splitlines()[:5]
+        assert any(line.startswith(RECORD_STARTS) for line in head), \
+            f"{out.name} does not begin with any PDB record: {head}"
 
-        # Check results
-        expected_file = tmpdir / f"{test_pdb_id.lower()}.pdb"
-
-        if success and expected_file.exists():
-            file_size = expected_file.stat().st_size
-            print(f"✓ SUCCESS: Downloaded {test_pdb_id} from RCSB")
-            print(f"  File: {expected_file}")
-            print(f"  Size: {file_size} bytes")
-
-            # Read first few lines
-            with open(expected_file, 'r') as f:
-                first_lines = [f.readline().strip() for _ in range(5)]
-
-            print(f"  First lines:")
-            for line in first_lines:
-                print(f"    {line}")
-
-            # Validate PDB format
-            valid_pdb = any(line.startswith(('HEADER', 'ATOM', 'HETATM', 'REMARK'))
-                          for line in first_lines)
-
-            if valid_pdb:
-                print(f"✓ File appears to be a valid PDB structure")
-                print(f"✓ RCSB fallback download works!")
-                return True
-            else:
-                print(f"✗ File does not appear to be a valid PDB structure")
-                return False
-        else:
-            print(f"✗ FAILED: Could not download {test_pdb_id} from RCSB")
-            return False
 
 if __name__ == "__main__":
-    success = test_rcsb_download()
-    exit(0 if success else 1)
+    test_rcsb_download()
+    print("ok")

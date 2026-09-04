@@ -5,40 +5,35 @@ import tempfile
 from pathlib import Path
 from chembl_curator import ProteinFilter
 
-def test_invalid_pdb():
-    """Test that invalid PDB IDs are handled gracefully."""
 
+def test_invalid_pdb():
+    """An unknown PDB ID must be reported as a failure, not half-written."""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
-
-        # Use an obviously invalid PDB ID
         invalid_pdb_id = "XXXX"
 
-        print(f"Testing error handling with invalid PDB ID: {invalid_pdb_id}")
-        print(f"Temporary directory: {tmpdir}")
-
-        # Create ProteinFilter instance
-        pf = ProteinFilter(curated_dir=tmpdir, log_level="DEBUG")
-
-        # Try to download invalid PDB
+        pf = ProteinFilter(curated_dir=tmpdir, log_level="ERROR")
         success = pf.download_pdb(invalid_pdb_id, tmpdir)
 
-        # Check results
-        expected_file = tmpdir / f"{invalid_pdb_id.lower()}.pdb"
+        assert not success, "download_pdb reported success for a nonexistent entry"
+        assert not (tmpdir / f"{invalid_pdb_id.lower()}.pdb").exists(), \
+            "a file was left behind for a nonexistent entry"
 
-        if not success and not expected_file.exists():
-            print(f"✓ SUCCESS: Invalid PDB correctly rejected")
-            print(f"  Download returned False as expected")
-            print(f"  No file was created")
-            return True
-        else:
-            print(f"✗ FAILED: Invalid PDB was not rejected properly")
-            if success:
-                print(f"  Download returned True (should be False)")
-            if expected_file.exists():
-                print(f"  File was created (should not exist)")
-            return False
+
+def test_invalid_pdb_leaves_a_miss_marker():
+    """The cache must remember the miss, or every run re-asks RCSB for it."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        cache = tmpdir / "cache"
+        cache.mkdir()
+
+        pf = ProteinFilter(curated_dir=tmpdir, log_level="ERROR", cache_dir=cache)
+        assert not pf.download_pdb("XXXX", tmpdir)
+        assert (cache / "xxxx.miss").exists(), \
+            "no .miss marker written; the failed lookup will be repeated forever"
+
 
 if __name__ == "__main__":
-    success = test_invalid_pdb()
-    exit(0 if success else 1)
+    test_invalid_pdb()
+    test_invalid_pdb_leaves_a_miss_marker()
+    print("ok")
