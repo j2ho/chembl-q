@@ -312,7 +312,7 @@ class ProteinFilter:
 
         pdb_file.write_text(text)
         self._write_modres_sidecar(cif_file, pdb_file)
-        self.logger.debug(f"Downloaded {pdb_id} as mmCIF and converted")
+        self.logger.info(f"Downloaded {pdb_id} as mmCIF and converted")
         return pdb_file.stat().st_size > 0
 
     @staticmethod
@@ -837,8 +837,33 @@ class ProteinFilter:
                     )
                     fout.write(new_line)
 
+            self._propagate_modres(query_pdb, output_pdb)
+
         except Exception as e:
             self.logger.error(f"Error aligning PDB {query_pdb}: {e}")
+
+    def _propagate_modres(self, source_pdb: Path, aligned_pdb: Path) -> None:
+        """Carry the modified-residue annotation onto the aligned structure.
+
+        align_pdb writes only ATOM and HETATM, so a native PDB's MODRES records
+        do not survive into the aligned file, and every pocket decision is made
+        on the aligned file. Without this the modified-residue filter silently
+        does nothing: 4C6D kept picking its carboxylated lysine over the real
+        ligand even after the filter was added, because by the time the filter
+        ran the declaration was gone.
+
+        Same failure as the mmCIF conversion, one stage later. Writing the
+        sidecar unconditionally, including when empty, keeps "checked, none"
+        distinguishable from "never looked".
+        """
+        codes = self.modified_residues(Path(source_pdb))
+        rows = "\n".join(f"{c}\t\t\t" for c in sorted(codes))
+        try:
+            Path(aligned_pdb).with_suffix('.modres').write_text(
+                'comp_id\tchain\tseq_id\tparent\n' + rows + ('\n' if rows else ''))
+        except OSError as e:
+            self.logger.warning(
+                f"Could not write modres sidecar for {aligned_pdb}: {e}")
 
     def check_same_pocket(self, ligand_centers: List[np.ndarray], distance_threshold: float = 10.0) -> bool:
         """

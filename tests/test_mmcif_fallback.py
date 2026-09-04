@@ -91,6 +91,42 @@ def test_declared_modified_residues_are_not_ligand_candidates():
         assert "KCX" in relaxed or not relaxed
 
 
+def test_alignment_carries_the_annotation_forward():
+    """The bug the earlier tests missed.
+
+    Every pocket decision is made on the aligned file, and align_pdb writes
+    only ATOM and HETATM. Testing the filter on a single file that holds both
+    MODRES and coordinates passed while the real two-stage pipeline lost the
+    declaration in between, so 4C6D kept choosing KCX.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        src = tmp / "4c6d.pdb"
+        src.write_text(NATIVE)
+        aligned = tmp / "4c6d_A.pdb"
+        aligned.write_text(CONVERTED)      # what align_pdb would emit
+
+        pf = _pf(tmp)
+        assert pf.modified_residues(src) == {"KCX", "TPO"}
+        assert pf.modified_residues(aligned) == set(), "no sidecar yet"
+
+        pf._propagate_modres(src, aligned)
+        assert pf.modified_residues(aligned) == {"KCX", "TPO"}
+
+
+def test_propagation_records_an_empty_result_too():
+    """"checked, none" must be distinguishable from "never looked"."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        src = tmp / "1t2f.pdb"
+        src.write_text(CONVERTED)          # no MODRES at all
+        aligned = tmp / "1t2f_C.pdb"
+        aligned.write_text(CONVERTED)
+        _pf(tmp)._propagate_modres(src, aligned)
+        assert aligned.with_suffix(".modres").exists()
+        assert _pf(tmp).modified_residues(aligned) == set()
+
+
 if __name__ == "__main__":
     import sys
     import traceback

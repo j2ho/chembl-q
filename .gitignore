@@ -35,14 +35,17 @@ chembl_data/
 curated_data/
 curated_chembl/
 curated_data_filtered/
-curated_v2/
-curated_v3/
+curated_v*/
 test_curated/
+
+# Shared structure cache (tens of thousands of downloaded PDB/mmCIF files)
+pdb_cache/
 
 # Derived reference sets and scratch inspection output
 external_ligands/
 pocket_inspection/
 raw-materials-html/
+newly_admitted.tsv
 
 # Per-run outputs / logs
 log.out
