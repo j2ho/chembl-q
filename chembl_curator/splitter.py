@@ -543,12 +543,13 @@ class TargetSplitter:
 
             (test_lines if is_test else train_lines).append(line)
 
+        target_split = self._assign_splits(chembl_actives, member_to_rep, valid_reps)
+
         # ChEMBL entries (one line per active)
         for uniprot in sorted(chembl_actives):
             clu_key = f"chembl.{uniprot}"
-            rep = member_to_rep.get(clu_key, clu_key)
             w = member_weight.get(clu_key, 1.0)
-            is_test = rep in valid_reps and uniprot not in self.demoted_targets
+            is_test = target_split[uniprot] == "test"
 
             for active_id in chembl_actives[uniprot]:
                 line = f"chembl\t{uniprot}\t{active_id}\t{w:.2f}"
@@ -566,25 +567,51 @@ class TargetSplitter:
 
         # Generate chembl_targets.tsv
         targets_path = self._write_chembl_targets(
-            data_dir, output_dir, chembl_actives, member_to_rep, valid_reps
+            data_dir, output_dir, chembl_actives, target_split
         )
 
         return train_path, test_path, targets_path
+
+    def _assign_splits(
+        self,
+        chembl_actives: Dict[str, List[str]],
+        member_to_rep: Dict[str, str],
+        valid_reps: Set[str],
+    ) -> Dict[str, str]:
+        """Decide train/test for every ChEMBL target, once.
+
+        Landing in a test-eligible cluster is necessary but not sufficient:
+        a target demoted for direct sequence identity to a train sequence
+        belongs in train no matter which cluster it sits in.
+
+        Everything downstream reads this dict. While train.txt and
+        chembl_targets.tsv each derived a label from valid_reps on their own,
+        the summary forgot the demotion and advertised 8 leaking targets as
+        test while train.txt correctly held them.
+        """
+        splits: Dict[str, str] = {}
+        for uniprot in chembl_actives:
+            clu_key = f"chembl.{uniprot}"
+            rep = member_to_rep.get(clu_key, clu_key)
+            in_test = rep in valid_reps and uniprot not in self.demoted_targets
+            splits[uniprot] = "test" if in_test else "train"
+        return splits
 
     def _write_chembl_targets(
         self,
         data_dir: Path,
         output_dir: Path,
         chembl_actives: Dict[str, List[str]],
-        member_to_rep: Dict[str, str],
-        valid_reps: Set[str],
+        target_split: Dict[str, str],
     ) -> Path:
-        """Write chembl_targets.tsv with per-target summary."""
+        """Write chembl_targets.tsv with per-target summary.
+
+        Takes the split assignment rather than recomputing it, so this file
+        cannot disagree with train.txt and test.txt.
+        """
         lines: List[str] = ["uniprot\tsplit\tn_actives\tn_decoys"]
         for uniprot in sorted(chembl_actives):
-            clu_key = f"chembl.{uniprot}"
-            rep = member_to_rep.get(clu_key, clu_key)
-            split_label = "test" if rep in valid_reps else "train"
+            split_label = target_split[uniprot]
 
             n_actives = len(chembl_actives[uniprot])
 

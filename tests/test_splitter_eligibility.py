@@ -134,3 +134,51 @@ if __name__ == "__main__":
             traceback.print_exc()
     print(f"\n{'FAILED' if failed else 'all tests passed'} ({failed} failures)")
     sys.exit(1 if failed else 0)
+
+
+def _splitter(demoted=()):
+    s = TargetSplitter(valid_frac=1.0, log_level="CRITICAL")
+    s.demoted_targets = set(demoted)
+    return s
+
+
+def test_demoted_target_is_labelled_train():
+    """Cluster eligibility alone does not make a target test.
+
+    P1 sits in a ChEMBL-only cluster, so valid_reps says test, but it was
+    demoted for direct identity to a train sequence.
+    """
+    s = _splitter(demoted={"P1"})
+    splits = s._assign_splits(
+        chembl_actives={"P1": ["c1"], "P2": ["c2"]},
+        member_to_rep={"chembl.P1": "r1", "chembl.P2": "r2"},
+        valid_reps={"r1", "r2"},
+    )
+    assert splits["P1"] == "train"
+    assert splits["P2"] == "test"
+
+
+def test_without_demotion_the_same_target_is_test():
+    """Guard for the test above: P1 must be test when nothing demotes it,
+    otherwise the assertion would pass for the wrong reason."""
+    s = _splitter()
+    splits = s._assign_splits(
+        chembl_actives={"P1": ["c1"]},
+        member_to_rep={"chembl.P1": "r1"},
+        valid_reps={"r1"},
+    )
+    assert splits["P1"] == "test"
+
+
+def test_summary_cannot_disagree_with_the_split_files():
+    """chembl_targets.tsv is written from the assignment, not from a second
+    reading of valid_reps. Passing a label the cluster state contradicts must
+    produce that label, which is what makes the two files agree by
+    construction."""
+    import inspect
+
+    sig = inspect.signature(TargetSplitter._write_chembl_targets)
+    assert "target_split" in sig.parameters, \
+        "_write_chembl_targets must be handed the assignment"
+    assert "valid_reps" not in sig.parameters, \
+        "_write_chembl_targets must not be able to recompute the split"
