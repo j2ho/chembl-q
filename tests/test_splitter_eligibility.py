@@ -198,9 +198,9 @@ def test_external_coverage_is_measured_over_the_external_sequence():
     from unittest.mock import patch
 
     rows = [
-        # query, target, fident, alnlen, qlen, tlen
-        ("chembl.P11717", "pdbbind.6n5x", "0.99", "180", "2491", "182"),
-        ("chembl.P99999", "biolip.1abc_LIG_A_1", "0.99", "60", "100", "300"),
+        # query=external, target=chembl, fident, alnlen, qlen(ext), tlen(chembl)
+        ("pdbbind.6n5x", "chembl.P11717", "0.99", "180", "182", "2491"),
+        ("biolip.1abc_LIG_A_1", "chembl.P99999", "0.99", "60", "300", "100"),
     ]
     with tempfile.TemporaryDirectory() as tmp:
         td = Path(tmp)
@@ -222,7 +222,8 @@ def test_external_coverage_threshold_is_configurable():
     import tempfile
     from unittest.mock import patch
 
-    row = ("chembl.P1", "biolip.1abc_LIG_A_1", "0.99", "50", "1000", "100")
+    # query=external (100 aa), target=chembl; 50 aligned is half the external
+    row = ("biolip.1abc_LIG_A_1", "chembl.P1", "0.99", "50", "100", "1000")
     with tempfile.TemporaryDirectory() as tmp:
         td = Path(tmp)
         (td / "external_hits.tsv").write_text("\t".join(row) + "\n")
@@ -290,3 +291,69 @@ def test_columns_are_absent_when_stage_8_has_not_run():
             data, Path(tmp), {"P1": ["c1"]}, {"P1": "train"})
         header = out.read_text().split("\n")[0].split("\t")
     assert header == ["uniprot", "split", "n_actives", "n_decoys"]
+
+
+def test_owning_an_external_pdb_entry_blocks_a_target():
+    """Sequence search cannot be relied on to catch this.
+
+    IGF2R is 2,491 residues and its PDBbind entry 6N5X is a 182-residue
+    construct; mmseqs reports a 31-residue alignment at 100% identity, which
+    clears no coverage rule in either search direction. The PDB identifier
+    settles it.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        td = Path(tmp)
+        ext = td / "external.fasta"
+        ext.write_text(">pdbbind.6n5x\nAAAA\n>biolip.1abc_LIG_A_1\nCCCC\n")
+        data = td / "data"
+        for target, pdbs in (("P11717", "6n5x 1xyz"),       # owns 6N5X
+                             ("P00001", "1ABC 2def"),        # owns 1abc, case differs
+                             ("P00002", "9zzz 8yyy")):       # owns neither
+            (data / target).mkdir(parents=True)
+            (data / target / "pdbid.list").write_text(pdbs.replace(" ", "\n") + "\n")
+
+        s = TargetSplitter(log_level="CRITICAL")
+        blocked = s._find_external_structure_sharing(data, ext)
+
+    assert blocked == {"P11717", "P00001"}, blocked
+
+
+def test_structure_sharing_ignores_targets_with_no_pdb_list():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        td = Path(tmp)
+        ext = td / "external.fasta"
+        ext.write_text(">pdbbind.6n5x\nAAAA\n")
+        data = td / "data"
+        (data / "P00003").mkdir(parents=True)      # no pdbid.list at all
+        s = TargetSplitter(log_level="CRITICAL")
+        assert s._find_external_structure_sharing(data, ext) == set()
+
+
+def test_homologue_search_reads_coverage_from_the_query_side():
+    """The external sequence is the query, so its coverage is alnlen/qlen.
+
+    Reading tlen instead would measure coverage of the ChEMBL target, which is
+    the bug the external-coverage fix removed in the first place.
+    """
+    import tempfile
+    from unittest.mock import patch
+
+    rows = [
+        # query=external, target=chembl, fident, alnlen, qlen(ext), tlen(chembl)
+        ("pdbbind.6n5x", "chembl.P11717", "0.99", "180", "182", "2491"),
+        ("biolip.1abc_LIG_A_1", "chembl.P99999", "0.99", "60", "300", "100"),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        td = Path(tmp)
+        (td / "external_hits.tsv").write_text(
+            "".join("\t".join(r) + "\n" for r in rows))
+        s = TargetSplitter(seqid=0.4, log_level="CRITICAL")
+        with patch("chembl_curator.splitter.subprocess.run"):
+            blocked = s._find_external_homologues(td / "c.fasta", td / "e.fasta", td)
+
+    assert "P11717" in blocked, "a fully covered external sequence must block"
+    assert "P99999" not in blocked, "a fragment of the external sequence must not"

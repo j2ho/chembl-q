@@ -137,12 +137,18 @@ class TargetSplitter:
         hits = tmpdir / "external_hits.tsv"
         search_tmp = tmpdir / "search_tmp"
         search_tmp.mkdir(exist_ok=True)
+        # The external sequences are the QUERY. mmseqs optimises the alignment
+        # for the query, and the rule below asks how much of the external
+        # sequence is covered, so the question is asked from that side. Run the
+        # other way round it misses 4 targets it otherwise blocks, and blocks
+        # nothing extra.
         subprocess.run(
             [
                 "mmseqs", "easy-search",
-                str(chembl_fasta), str(external_fasta), str(hits), str(search_tmp),
+                str(external_fasta), str(chembl_fasta), str(hits), str(search_tmp),
                 "--threads", str(self.threads),
                 "-s", "7.5",
+                "--alignment-mode", "3",
                 "--format-output", "query,target,fident,alnlen,qlen,tlen",
             ],
             check=True, capture_output=True,
@@ -158,18 +164,58 @@ class TargetSplitter:
                 n_rows += 1
                 try:
                     fident = float(parts[2])
-                    alnlen, tlen = int(parts[3]), int(parts[5])
+                    alnlen, qlen = int(parts[3]), int(parts[4])
                 except ValueError:
                     continue
-                if fident < self.seqid or alnlen / max(1, tlen) < self.external_coverage:
+                # qlen is the external sequence: see the docstring.
+                if fident < self.seqid or alnlen / max(1, qlen) < self.external_coverage:
                     continue
-                blocked.add(parts[0].split(".", 1)[-1])
+                blocked.add(parts[1].split(".", 1)[-1])
 
         self.logger.info(
             f"External homologue search: {n_rows} hits, "
             f"{len(blocked)} ChEMBL targets blocked from test "
             f"(>={self.seqid} identity over >={self.external_coverage:.0%} "
             "of the external sequence)"
+        )
+        return blocked
+
+    def _find_external_structure_sharing(
+        self, data_dir: Path, external_fasta: Path
+    ) -> Set[str]:
+        """ChEMBL targets that own a PDB entry the external sets also hold.
+
+        Sequence search cannot be relied on for this. IGF2R is 2,491 residues
+        and its PDBbind entry 6N5X is a 182-residue construct; mmseqs reports a
+        31-residue alignment at 100% identity, which clears no coverage rule in
+        either search direction, and the target keeps its own structure in the
+        test set. Four test targets were in exactly that position.
+
+        The PDB identifier settles it without geometry or alignment: if an
+        entry this target was built from is in PDBbind or BioLiP, a model
+        trained on those has seen it. On curated_v5 this blocks 16 test
+        targets carrying 145 of 8,611 test actives.
+        """
+        external_pdbs: Set[str] = set()
+        with open(external_fasta) as fh:
+            for line in fh:
+                if not line.startswith(">"):
+                    continue
+                entry = line[1:].strip().split()[0].partition(".")[2]
+                if entry:
+                    external_pdbs.add(entry.split("_")[0].lower())
+
+        blocked: Set[str] = set()
+        for pdbid_list in Path(data_dir).glob("*/pdbid.list"):
+            owned = {t.strip().lower() for t in pdbid_list.read_text().split()
+                     if t.strip()}
+            if owned & external_pdbs:
+                blocked.add(pdbid_list.parent.name)
+
+        self.logger.info(
+            f"External structure sharing: {len(external_pdbs)} distinct PDB "
+            f"entries in the external sets, {len(blocked)} ChEMBL targets own "
+            "at least one of them and are blocked from test"
         )
         return blocked
 
@@ -473,6 +519,9 @@ class TargetSplitter:
                         f.write(f">chembl.{sid}\n{seq}\n")
                 self.blocked_targets = self._find_external_homologues(
                     chembl_only, ext_fasta, td
+                )
+                self.blocked_targets |= self._find_external_structure_sharing(
+                    data_dir, ext_fasta
                 )
 
             # Group members by representative
