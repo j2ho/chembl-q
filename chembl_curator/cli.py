@@ -390,7 +390,7 @@ def select_decoys(data_dir, max_decoys, seqid_thresh, pocket_rmsd_thresh,
 @with_logging
 def split(data_dir, seqid, valid_frac, threads, external_fasta, no_external,
           output_dir, log_level):
-    """Stage 7: Train/test split by sequence-identity clustering.
+    """Stage 8: Train/test split by sequence-identity clustering.
 
     Clusters all passed targets (+ external datasets) at the given seqid
     threshold. Clusters are greedily assigned to train/test while balancing
@@ -432,7 +432,7 @@ def split(data_dir, seqid, valid_frac, threads, external_fasta, no_external,
 @click.option('--external-fasta', type=click.Path(exists=True),
               help='External FASTA defining the entry list '
                    '(default: the bundled PDBbind+BioLiP file). The same file '
-                   'stage 7 blocks against, so the two cannot disagree about '
+                   'stage 8 blocks against, so the two cannot disagree about '
                    'what counts as external.')
 @click.option('--biolip-dir', type=click.Path(exists=True),
               help='BioLiP_updated_set directory holding receptor/ and ligand/')
@@ -448,7 +448,7 @@ def split(data_dir, seqid, valid_frac, threads, external_fasta, no_external,
 @with_logging
 def external_pockets(external_fasta, biolip_dir, pdbbind_dir, output,
                      pocket_radius, workers, log_level):
-    """Stage 8a: extract and cache PDBbind/BioLiP pockets."""
+    """Stage 7a: extract and cache PDBbind/BioLiP pockets."""
     if external_fasta is None:
         external_fasta = Path(__file__).parent / 'assets' / 'external_targets.fasta'
         click.echo(f"Using bundled external FASTA: {external_fasta}")
@@ -485,9 +485,9 @@ def external_pockets(external_fasta, biolip_dir, pdbbind_dir, output,
 @with_logging
 def pocket_leakage(data_dir, cache, pocket_radius, rmsd_report,
                    min_matched_residues, workers, log_level):
-    """Stage 8b: score ChEMBL pockets against the external pockets.
+    """Stage 7b: score ChEMBL pockets against the external pockets.
 
-    Stage 7 separates test from PDBbind and BioLiP by sequence only. Two
+    Stage 8 separates test from PDBbind and BioLiP by sequence only. Two
     proteins can share a binding site without aligning in sequence, and a
     model trained on those sets has seen the pocket either way.
     """

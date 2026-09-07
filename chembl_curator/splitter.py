@@ -1,6 +1,6 @@
 # chembl_curator/splitter.py
 
-"""Stage 7: Train/test split by sequence-identity clustering.
+"""Stage 8: Train/test split by sequence-identity clustering.
 
 Clusters all passed targets (and optional external datasets) using MMseqs2
 at a configurable seqid threshold (default 30%). Clusters are greedily
@@ -628,7 +628,7 @@ class TargetSplitter:
         Takes the split assignment rather than recomputing it, so this file
         cannot disagree with train.txt and test.txt.
 
-        When stage 8 has run, its per-target best external pocket match is
+        When stage 7 has run, its per-target best external pocket match is
         carried here as two extra columns. Pocket overlap with PDBbind and
         BioLiP is reported rather than filtered: cutting on it removes the
         data-rich targets, since a fold that has been drugged hard is also a
@@ -677,9 +677,9 @@ class TargetSplitter:
     def _load_external_pocket_best(
         self, data_dir: Path
     ) -> Dict[str, Tuple[str, str]]:
-        """Per-target closest external pocket, written by stage 8.
+        """Per-target closest external pocket, written by stage 7.
 
-        Absent when stage 8 has not been run, in which case the two columns
+        Absent when stage 7 has not been run, in which case the two columns
         are simply left off rather than filled with a value that would read
         as "no external pocket is close".
         """

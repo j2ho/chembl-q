@@ -1,10 +1,4 @@
 {
-  "activity_thresholds": {
-    "nM": 10000.0,
-    "uM": 10.0
-  },
-  "min_heavy_atoms": 5,
-  "max_heavy_atoms": 80,
   "target_types": [
     "SINGLE PROTEIN"
   ],
@@ -22,6 +16,15 @@
     "nM",
     "uM"
   ],
+  "activity_thresholds": {
+    "nM": 10000.0,
+    "uM": 10.0
+  },
+  "min_pchembl_value": 5,
+
+  "min_heavy_atoms": 5,
+  "max_heavy_atoms": 80,
+
   "require_standard_flag": false,
   "exclude_invalid_data": true,
   "exclude_duplicates": true,
@@ -32,5 +35,9 @@
   "bao_formats": [
     "BAO_0000357"
   ],
-  "min_pchembl_value": 5
+
+  "extract_negatives": true,
+  "active_max_nm": 10000.0,
+  "inactive_min_nm": 100000.0,
+  "conflict_decisive_nm": 1000.0
 }

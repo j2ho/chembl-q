@@ -211,7 +211,7 @@ def parse_structure_residues(pdb_path: Path, ligand_name: str):
 def chembl_pocket(pdb_path: Path, ligand_name: str, pocket_radius: float = 8.0):
     """The pocket of one ChEMBL target, as stage 5 defines it.
 
-    Stage 8 compares these against PDBbind and BioLiP pockets, so the
+    Stage 7 compares these against PDBbind and BioLiP pockets, so the
     definition lives here rather than being spelled out again there. A
     leakage check run against a differently-built pocket would be measuring
     the difference between the two definitions as much as anything else.

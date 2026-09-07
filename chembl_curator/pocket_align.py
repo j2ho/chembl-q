@@ -108,7 +108,7 @@ def prepare_pocket(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Pack a pocket into (class codes, coordinates, fingerprint).
 
-    Stage 8 holds ~39k external pockets in this form and compares each of
+    Stage 7 holds ~39k external pockets in this form and compares each of
     them against every ChEMBL pocket. Re-deriving the arrays and the
     fingerprint inside every one of those 50M calls costs more than the
     superposition, and the list-of-tuples form is an order of magnitude

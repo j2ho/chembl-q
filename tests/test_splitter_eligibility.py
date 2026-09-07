@@ -253,7 +253,7 @@ def _targets_fixture(tmp, with_external):
 
 
 def test_external_pocket_columns_are_reported_not_filtered():
-    """Stage 8's verdict rides along in the summary; it must not move a target.
+    """Stage 7's verdict rides along in the summary; it must not move a target.
 
     Cutting on pocket similarity removes the data-rich targets, so the number
     is published and the reader decides.

@@ -1,8 +1,8 @@
 # chembl_curator/external_pockets.py
 
-"""Stage 8: pocket-level leakage against PDBbind and BioLiP.
+"""Stage 7: pocket-level leakage against PDBbind and BioLiP.
 
-Stage 7 separates the test set from the external datasets by sequence, which
+Stage 8 separates the test set from the external datasets by sequence, which
 is not the same guarantee. Two proteins can share a binding site while sitting
 far apart in sequence space, and on the ChEMBL side the two signals barely
 overlap: of 3,073 pocket-similar target pairs only 107 are also caught at
@@ -21,7 +21,7 @@ Two steps:
            per-target best match, so a split can demote test targets without
            recomputing anything.
 
-The entry list comes from the same external FASTA stage 7 blocks against, so
+The entry list comes from the same external FASTA stage 8 blocks against, so
 the two stages cannot disagree about what "external" means.
 """
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage 8: external pocket extraction, caching, and entry resolution."""
+"""Stage 7: external pocket extraction, caching, and entry resolution."""
 
 import tempfile
 from pathlib import Path
@@ -147,7 +147,7 @@ def test_ligand_parsed_without_a_name_takes_every_atom():
 
 def test_cache_round_trip_preserves_the_superposition():
     """A pocket that has been through the npz must give the same answer as one
-    that has not, or every stage 8 number is measuring the cache."""
+    that has not, or every stage 7 number is measuring the cache."""
     rng = np.random.default_rng(0)
     names = [RESIDUE_CODES[i % len(RESIDUE_CODES)] for i in range(20)]
     coords = rng.normal(scale=5.0, size=(20, 3))

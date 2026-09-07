@@ -119,7 +119,7 @@ if __name__ == "__main__":
 
 
 def test_prepared_path_matches_the_list_path():
-    """prepare_pocket exists for speed and memory in stage 8, where ~39k
+    """prepare_pocket exists for speed and memory in stage 7, where ~39k
     external pockets are each compared against every ChEMBL pocket. It must
     not change a single answer."""
     import numpy as np
