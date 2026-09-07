@@ -136,18 +136,13 @@ def _hungarian_worker(
     return (ta, tb, -1.0, float(rmsd), int(n_matched), na, nb)
 
 
-def parse_structure_residues(pdb_path: Path, ligand_name: str):
-    """Read one aligned PDB into (protein residues, ligand heavy atoms).
+def iter_heavy_atoms(pdb_path: Path):
+    """Yield (record, resname, chain, resseq, atom_name, xyz) for heavy atoms.
 
-    Residues come back as (residue_name, CA coordinate, heavy-atom array),
-    which is what pocket_from_structure expects. Hydrogens and alternate
-    locations other than the first are dropped.
+    Hydrogens and alternate locations other than the first are dropped. Every
+    pocket in this pipeline is built from this one reader, so a ChEMBL pocket
+    and an external one cannot end up filtered by different rules.
     """
-    residues: Dict[Tuple[str, str], list] = {}
-    ca: Dict[Tuple[str, str], np.ndarray] = {}
-    names: Dict[Tuple[str, str], str] = {}
-    ligand: list = []
-
     with open(pdb_path, errors="replace") as fh:
         for line in fh:
             if len(line) < 54:
@@ -166,23 +161,63 @@ def parse_structure_residues(pdb_path: Path, ligand_name: str):
                                 float(line[46:54])])
             except ValueError:
                 continue
+            yield record, line[17:20].strip(), line[21], line[22:27], atom, xyz
 
-            resname = line[17:20].strip()
-            if record == "ATOM  " and resname in _STANDARD_RESIDUES:
-                key = (line[21], line[22:27])
-                residues.setdefault(key, []).append(xyz)
-                names[key] = resname
-                if atom == "CA":
-                    ca[key] = xyz
-            elif record == "HETATM" and resname == ligand_name:
-                ligand.append(xyz)
 
-    parsed = [
+def parse_protein_residues(pdb_path: Path):
+    """Standard-residue heavy atoms as (residue_name, CA coord, atom array)."""
+    residues: Dict[Tuple[str, str], list] = {}
+    ca: Dict[Tuple[str, str], np.ndarray] = {}
+    names: Dict[Tuple[str, str], str] = {}
+
+    for record, resname, chain, resseq, atom, xyz in iter_heavy_atoms(pdb_path):
+        if record != "ATOM  " or resname not in _STANDARD_RESIDUES:
+            continue
+        key = (chain, resseq)
+        residues.setdefault(key, []).append(xyz)
+        names[key] = resname
+        if atom == "CA":
+            ca[key] = xyz
+
+    return [
         (names[key], ca[key], np.stack(atoms))
         for key, atoms in residues.items()
         if key in ca
     ]
-    return parsed, np.asarray(ligand, dtype=float)
+
+
+def parse_ligand_atoms(pdb_path: Path, ligand_name: Optional[str] = None):
+    """Ligand heavy atoms.
+
+    With a ligand_name, takes HETATM records of that residue from a combined
+    file. Without one, takes every heavy atom in the file, which is the case
+    for PDBbind and BioLiP where the ligand ships as its own file and may be
+    written as ATOM rather than HETATM.
+    """
+    atoms = [
+        xyz
+        for record, resname, _, _, _, xyz in iter_heavy_atoms(pdb_path)
+        if ligand_name is None or (record == "HETATM" and resname == ligand_name)
+    ]
+    return np.asarray(atoms, dtype=float)
+
+
+def parse_structure_residues(pdb_path: Path, ligand_name: str):
+    """Read one aligned PDB into (protein residues, ligand heavy atoms)."""
+    return (parse_protein_residues(pdb_path),
+            parse_ligand_atoms(pdb_path, ligand_name))
+
+
+def chembl_pocket(pdb_path: Path, ligand_name: str, pocket_radius: float = 8.0):
+    """The pocket of one ChEMBL target, as stage 5 defines it.
+
+    Stage 8 compares these against PDBbind and BioLiP pockets, so the
+    definition lives here rather than being spelled out again there. A
+    leakage check run against a differently-built pocket would be measuring
+    the difference between the two definitions as much as anything else.
+    """
+    residues, ligand_xyz = parse_structure_residues(pdb_path, ligand_name)
+    return pocket_from_structure(residues, ligand_xyz, pocket_radius)
 
 
 # ── Main class ────────────────────────────────────────────────────────────────
@@ -360,8 +395,7 @@ class ReceptorSimilarity:
                 if lig_name is None:
                     skipped.append((uniprot, 'no_lig_name'))
                     continue
-                residues, ligand_xyz = parse_structure_residues(pdb_path, lig_name)
-                pocket = pocket_from_structure(residues, ligand_xyz, pocket_radius)
+                pocket = chembl_pocket(pdb_path, lig_name, pocket_radius)
                 if pocket is None:
                     skipped.append((uniprot, 'empty_pocket'))
                     continue

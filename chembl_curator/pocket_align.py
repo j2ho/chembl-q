@@ -96,14 +96,47 @@ def aligned_rmsd(
     if len(pocket_a) == 0 or len(pocket_b) == 0:
         raise ValueError("empty pocket")
 
-    cls_a = np.array([AA_CLASS.get(name, "X") for name, _ in pocket_a])
-    cls_b = np.array([AA_CLASS.get(name, "X") for name, _ in pocket_b])
-    xyz_a = np.stack([c for _, c in pocket_a])
-    xyz_b = np.stack([c for _, c in pocket_b])
+    return aligned_rmsd_prepared(
+        prepare_pocket(pocket_a), prepare_pocket(pocket_b),
+        min_matched=min_matched, trim_fraction=trim_fraction,
+        mismatch_penalty=mismatch_penalty, max_iterations=max_iterations,
+    )
+
+
+def prepare_pocket(
+    pocket: Sequence[Tuple[str, np.ndarray]],
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Pack a pocket into (class codes, coordinates, fingerprint).
+
+    Stage 8 holds ~39k external pockets in this form and compares each of
+    them against every ChEMBL pocket. Re-deriving the arrays and the
+    fingerprint inside every one of those 50M calls costs more than the
+    superposition, and the list-of-tuples form is an order of magnitude
+    larger in memory once it is copied into each worker.
+    """
+    cls = np.array([AA_CLASS.get(name, "X") for name, _ in pocket])
+    xyz = np.stack([c for _, c in pocket])
+    return cls, xyz, fingerprint(xyz)
+
+
+def aligned_rmsd_prepared(
+    a: Tuple[np.ndarray, np.ndarray, np.ndarray],
+    b: Tuple[np.ndarray, np.ndarray, np.ndarray],
+    min_matched: int = MIN_MATCHED_RESIDUES,
+    trim_fraction: float = TRIM_FRACTION,
+    mismatch_penalty: float = MISMATCH_PENALTY,
+    max_iterations: int = MAX_ITERATIONS,
+) -> Tuple[int, float]:
+    """aligned_rmsd on pockets already packed by prepare_pocket."""
+    cls_a, xyz_a, fp_a = a
+    cls_b, xyz_b, fp_b = b
+
+    if len(xyz_a) == 0 or len(xyz_b) == 0:
+        raise ValueError("empty pocket")
 
     penalty = (cls_a[:, None] != cls_b) * mismatch_penalty
     floor = min(min_matched, len(xyz_a), len(xyz_b))
-    cost = _cost(fingerprint(xyz_a), fingerprint(xyz_b), penalty)
+    cost = _cost(fp_a, fp_b, penalty)
 
     previous: Optional[Tuple] = None
     left = right = None

@@ -11,6 +11,7 @@ from .active_clusterer import ActiveClusterer
 from .compound_pool import CompoundPool
 from .receptor_similarity import ReceptorSimilarity
 from .decoy_selector import DecoySelector
+from .external_pockets import ExternalPocketLeakage
 from .splitter import TargetSplitter
 from .utils import setup_logging
 
@@ -425,6 +426,80 @@ def split(data_dir, seqid, valid_frac, threads, external_fasta, no_external,
     click.echo(f"Train:   {train_path}")
     click.echo(f"Test:    {test_path}")
     click.echo(f"Targets: {targets_path}")
+
+
+@cli.command(name='external-pockets')
+@click.option('--external-fasta', type=click.Path(exists=True),
+              help='External FASTA defining the entry list '
+                   '(default: the bundled PDBbind+BioLiP file). The same file '
+                   'stage 7 blocks against, so the two cannot disagree about '
+                   'what counts as external.')
+@click.option('--biolip-dir', type=click.Path(exists=True),
+              help='BioLiP_updated_set directory holding receptor/ and ligand/')
+@click.option('--pdbbind-dir', multiple=True, type=click.Path(exists=True),
+              help='PDBbind set directory, repeatable (v2020-refined, v2020-others)')
+@click.option('--output', '-o', required=True, type=click.Path(),
+              help='Output .npz cache path')
+@click.option('--pocket-radius', type=float, default=8.0, show_default=True,
+              help='Pocket radius in A, must match the stage 5 setting')
+@click.option('--workers', '-n', type=int, default=8, show_default=True)
+@click.option('--log-level', default='INFO',
+              type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']))
+@with_logging
+def external_pockets(external_fasta, biolip_dir, pdbbind_dir, output,
+                     pocket_radius, workers, log_level):
+    """Stage 8a: extract and cache PDBbind/BioLiP pockets."""
+    if external_fasta is None:
+        external_fasta = Path(__file__).parent / 'assets' / 'external_targets.fasta'
+        click.echo(f"Using bundled external FASTA: {external_fasta}")
+
+    leak = ExternalPocketLeakage(log_level=log_level)
+    path = leak.build(
+        Path(external_fasta),
+        Path(output),
+        biolip_dir=Path(biolip_dir) if biolip_dir else None,
+        pdbbind_dirs=[Path(p) for p in pdbbind_dir],
+        pocket_radius=pocket_radius,
+        workers=workers,
+    )
+    click.echo(f"External pocket cache: {path}")
+
+
+@cli.command(name='pocket-leakage')
+@click.option('--data-dir', '-d', required=True, type=click.Path(exists=True),
+              help='Root data directory')
+@click.option('--cache', required=True, type=click.Path(exists=True),
+              help='External pocket cache built by external-pockets')
+@click.option('--pocket-radius', type=float, default=8.0, show_default=True,
+              help='Pocket radius in A, must match the cache and stage 5')
+@click.option('--rmsd-report', type=float, default=4.0, show_default=True,
+              help='Report every pair at or below this RMSD. Deliberately '
+                   'looser than any demotion threshold so the threshold can '
+                   'be changed without recomputing the sweep.')
+@click.option('--min-matched-residues', type=int, default=15, show_default=True,
+              help='Minimum superposed residues for a hit to count')
+@click.option('--workers', '-n', type=int, default=8, show_default=True)
+@click.option('--log-level', default='INFO',
+              type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']))
+@with_logging
+def pocket_leakage(data_dir, cache, pocket_radius, rmsd_report,
+                   min_matched_residues, workers, log_level):
+    """Stage 8b: score ChEMBL pockets against the external pockets.
+
+    Stage 7 separates test from PDBbind and BioLiP by sequence only. Two
+    proteins can share a binding site without aligning in sequence, and a
+    model trained on those sets has seen the pocket either way.
+    """
+    leak = ExternalPocketLeakage(log_level=log_level)
+    hits, best = leak.compare(
+        Path(data_dir), Path(cache),
+        pocket_radius=pocket_radius,
+        rmsd_report=rmsd_report,
+        min_matched=min_matched_residues,
+        workers=workers,
+    )
+    click.echo(f"Hits:        {hits}")
+    click.echo(f"Best/target: {best}")
 
 
 if __name__ == '__main__':

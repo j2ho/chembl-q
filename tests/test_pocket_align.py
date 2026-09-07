@@ -116,3 +116,38 @@ if __name__ == "__main__":
             traceback.print_exc()
     print(f"\n{'FAILED' if failed else 'all tests passed'} ({failed} failures)")
     sys.exit(1 if failed else 0)
+
+
+def test_prepared_path_matches_the_list_path():
+    """prepare_pocket exists for speed and memory in stage 8, where ~39k
+    external pockets are each compared against every ChEMBL pocket. It must
+    not change a single answer."""
+    import numpy as np
+    from chembl_curator.pocket_align import (aligned_rmsd, aligned_rmsd_prepared,
+                                             prepare_pocket, AA_CLASS)
+
+    rng = np.random.default_rng(7)
+    names = list(AA_CLASS)[:24]
+    for trial in range(5):
+        a = list(zip(names, rng.normal(scale=6.0, size=(len(names), 3))))
+        b = list(zip(names, rng.normal(scale=6.0, size=(len(names), 3))))
+        want = aligned_rmsd(a, b)
+        got = aligned_rmsd_prepared(prepare_pocket(a), prepare_pocket(b))
+        assert want[0] == got[0], (trial, want, got)
+        assert abs(want[1] - got[1]) < 1e-12, (trial, want, got)
+
+
+def test_prepared_rejects_an_empty_pocket():
+    """The list path raises ValueError on an empty pocket and callers catch it;
+    the prepared path must not slip through and divide by zero instead."""
+    import numpy as np
+    import pytest
+    from chembl_curator.pocket_align import aligned_rmsd_prepared, prepare_pocket
+
+    good = prepare_pocket([("ALA", np.zeros(3)), ("GLY", np.ones(3)),
+                           ("TRP", np.full(3, 2.0))])
+    empty = (np.array([]), np.empty((0, 3)), np.empty((0, 0)))
+    with pytest.raises(ValueError):
+        aligned_rmsd_prepared(good, empty)
+    with pytest.raises(ValueError):
+        aligned_rmsd_prepared(empty, good)
