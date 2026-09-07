@@ -43,11 +43,15 @@ class TargetSplitter:
         seqid: float = 0.4,
         valid_frac: float = 1.0,
         threads: int = 4,
+        external_coverage: float = 0.8,
         log_level: str = "INFO",
     ):
         self.seqid = seqid
         self.valid_frac = valid_frac
         self.threads = threads
+        # Fraction of the EXTERNAL sequence an alignment must cover to block a
+        # target. See _find_external_homologues for why it is not the query.
+        self.external_coverage = external_coverage
         # Filled in by run(): ChEMBL targets with a direct external homologue.
         self.blocked_targets: Set[str] = set()
         # Filled in by run(): test targets demoted for train proximity.
@@ -112,10 +116,23 @@ class TargetSplitter:
     ) -> Set[str]:
         """ChEMBL targets with a direct sequence homologue in the external sets.
 
-        Answers the leakage question per target rather than per cluster: does
-        *this* sequence have an external hit at or above self.seqid over at
-        least 80% of its length. Hits shorter than that are domain-level and
-        do not mean a model has seen the target.
+        Answers the leakage question per target rather than per cluster.
+
+        Coverage is measured over the *external* sequence, not the ChEMBL
+        query. Requiring 80% of the query was wrong in the one direction that
+        matters: what gets crystallised is a domain, while the ChEMBL target
+        is the whole UniProt entry, so the alignment covers a fraction of the
+        query even when the external structure is literally the one this
+        target uses. Measured on curated_v5, 120 test targets had their own
+        representative PDB entry sitting in BioLiP or PDBbind at pocket RMSD
+        0.000, and every one of them was let through by the query-side rule:
+        median query coverage 0.40, worst 0.07 (IGF2R, 2,491 aa against a
+        182 aa construct). Against the external sequence those same hits
+        cover a median of 1.00.
+
+        The question is whether a model has seen this binding site, and a
+        fully covered external domain sitting inside the target at high
+        identity means it has, however small a slice of the target that is.
         """
         hits = tmpdir / "external_hits.tsv"
         search_tmp = tmpdir / "search_tmp"
@@ -126,7 +143,7 @@ class TargetSplitter:
                 str(chembl_fasta), str(external_fasta), str(hits), str(search_tmp),
                 "--threads", str(self.threads),
                 "-s", "7.5",
-                "--format-output", "query,target,fident,alnlen,qlen",
+                "--format-output", "query,target,fident,alnlen,qlen,tlen",
             ],
             check=True, capture_output=True,
         )
@@ -136,21 +153,23 @@ class TargetSplitter:
         with open(hits) as f:
             for line in f:
                 parts = line.rstrip("\n").split("\t")
-                if len(parts) < 5:
+                if len(parts) < 6:
                     continue
                 n_rows += 1
                 try:
-                    fident, alnlen, qlen = float(parts[2]), int(parts[3]), int(parts[4])
+                    fident = float(parts[2])
+                    alnlen, tlen = int(parts[3]), int(parts[5])
                 except ValueError:
                     continue
-                if fident < self.seqid or alnlen / max(1, qlen) < 0.8:
+                if fident < self.seqid or alnlen / max(1, tlen) < self.external_coverage:
                     continue
                 blocked.add(parts[0].split(".", 1)[-1])
 
         self.logger.info(
             f"External homologue search: {n_rows} hits, "
             f"{len(blocked)} ChEMBL targets blocked from test "
-            f"(>={self.seqid} identity over >=80% of the query)"
+            f"(>={self.seqid} identity over >={self.external_coverage:.0%} "
+            "of the external sequence)"
         )
         return blocked
 
@@ -608,8 +627,22 @@ class TargetSplitter:
 
         Takes the split assignment rather than recomputing it, so this file
         cannot disagree with train.txt and test.txt.
+
+        When stage 8 has run, its per-target best external pocket match is
+        carried here as two extra columns. Pocket overlap with PDBbind and
+        BioLiP is reported rather than filtered: cutting on it removes the
+        data-rich targets, since a fold that has been drugged hard is also a
+        fold those sets hold many structures of. On curated_v5 a 1.0 A cut
+        would have taken 21% of the test targets but 40% of the actives, and
+        43 of the 57 remaining kinases. Shipping the number lets a benchmark
+        be scored overall and on a pocket-novel subset without rebuilding
+        anything.
         """
-        lines: List[str] = ["uniprot\tsplit\tn_actives\tn_decoys"]
+        external = self._load_external_pocket_best(data_dir)
+        header = "uniprot\tsplit\tn_actives\tn_decoys"
+        if external:
+            header += "\text_pocket_rmsd\text_pocket_entry"
+        lines: List[str] = [header]
         for uniprot in sorted(chembl_actives):
             split_label = target_split[uniprot]
 
@@ -628,7 +661,11 @@ class TargetSplitter:
                             if len(parts) >= 2 and parts[1]:
                                 n_decoys += len(parts[1].split(';'))
 
-            lines.append(f"{uniprot}\t{split_label}\t{n_actives}\t{n_decoys}")
+            row = f"{uniprot}\t{split_label}\t{n_actives}\t{n_decoys}"
+            if external:
+                rmsd, entry = external.get(uniprot, ("", ""))
+                row += f"\t{rmsd}\t{entry}"
+            lines.append(row)
 
         targets_path = output_dir / "chembl_targets.tsv"
         targets_path.write_text('\n'.join(lines) + '\n')
@@ -636,3 +673,31 @@ class TargetSplitter:
             f"ChEMBL targets summary: {len(lines) - 1} targets -> {targets_path}"
         )
         return targets_path
+
+    def _load_external_pocket_best(
+        self, data_dir: Path
+    ) -> Dict[str, Tuple[str, str]]:
+        """Per-target closest external pocket, written by stage 8.
+
+        Absent when stage 8 has not been run, in which case the two columns
+        are simply left off rather than filled with a value that would read
+        as "no external pocket is close".
+        """
+        path = data_dir / "external_pocket_best.tsv"
+        if not path.exists():
+            return {}
+
+        best: Dict[str, Tuple[str, str]] = {}
+        with open(path) as fh:
+            next(fh, None)
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 3:
+                    continue
+                best[parts[0]] = (parts[2], parts[1])
+
+        self.logger.info(
+            f"External pocket matches loaded for {len(best)} targets; "
+            "reported in chembl_targets.tsv, not used to filter"
+        )
+        return best

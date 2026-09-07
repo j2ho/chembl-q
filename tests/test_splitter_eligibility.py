@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """The test split may never contain a target that clusters with PDBbind/BioLiP."""
 
+from pathlib import Path
+
 from chembl_curator.splitter import TargetSplitter
 
 
@@ -182,3 +184,109 @@ def test_summary_cannot_disagree_with_the_split_files():
         "_write_chembl_targets must be handed the assignment"
     assert "valid_reps" not in sig.parameters, \
         "_write_chembl_targets must not be able to recompute the split"
+
+
+def test_external_coverage_is_measured_over_the_external_sequence():
+    """A crystallised domain covers little of a large UniProt entry.
+
+    Requiring 80% of the ChEMBL query let 120 test targets through whose own
+    representative PDB entry was sitting in BioLiP or PDBbind at pocket RMSD
+    0.000; the worst covered 7% of the query (IGF2R, 2,491 aa against a 182 aa
+    construct) while covering the whole external sequence.
+    """
+    import tempfile
+    from unittest.mock import patch
+
+    rows = [
+        # query, target, fident, alnlen, qlen, tlen
+        ("chembl.P11717", "pdbbind.6n5x", "0.99", "180", "2491", "182"),
+        ("chembl.P99999", "biolip.1abc_LIG_A_1", "0.99", "60", "100", "300"),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        td = Path(tmp)
+        (td / "external_hits.tsv").write_text(
+            "".join("\t".join(r) + "\n" for r in rows))
+
+        s = TargetSplitter(seqid=0.4, log_level="CRITICAL")
+        with patch("chembl_curator.splitter.subprocess.run"):
+            blocked = s._find_external_homologues(td / "q.fasta",
+                                                  td / "e.fasta", td)
+
+    assert "P11717" in blocked, \
+        "a fully covered external domain inside a large target must block it"
+    assert "P99999" not in blocked, \
+        "a partial external sequence is a fragment hit and must not block"
+
+
+def test_external_coverage_threshold_is_configurable():
+    import tempfile
+    from unittest.mock import patch
+
+    row = ("chembl.P1", "biolip.1abc_LIG_A_1", "0.99", "50", "1000", "100")
+    with tempfile.TemporaryDirectory() as tmp:
+        td = Path(tmp)
+        (td / "external_hits.tsv").write_text("\t".join(row) + "\n")
+
+        strict = TargetSplitter(seqid=0.4, external_coverage=0.8,
+                                log_level="CRITICAL")
+        loose = TargetSplitter(seqid=0.4, external_coverage=0.5,
+                               log_level="CRITICAL")
+        with patch("chembl_curator.splitter.subprocess.run"):
+            assert "P1" not in strict._find_external_homologues(
+                td / "q.fasta", td / "e.fasta", td)
+            assert "P1" in loose._find_external_homologues(
+                td / "q.fasta", td / "e.fasta", td)
+
+
+def _targets_fixture(tmp, with_external):
+    """A data dir holding one train and one test target, each with decoys."""
+    data = Path(tmp) / "data"
+    for u in ("P1", "P2"):
+        (data / u).mkdir(parents=True)
+        (data / u / "decoys.tsv").write_text("active\tdecoys\nc1\td1;d2\n")
+    if with_external:
+        (data / "external_pocket_best.tsv").write_text(
+            "chembl_target\texternal_entry\tpocket_rmsd\tn_matched"
+            "\tn_pocket_chembl\tn_pocket_external\n"
+            "P1\tbiolip.1abc_LIG_A_1\t0.372\t28\t53\t32\n")
+    return data
+
+
+def test_external_pocket_columns_are_reported_not_filtered():
+    """Stage 8's verdict rides along in the summary; it must not move a target.
+
+    Cutting on pocket similarity removes the data-rich targets, so the number
+    is published and the reader decides.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data = _targets_fixture(tmp, with_external=True)
+        s = TargetSplitter(log_level="CRITICAL")
+        out = s._write_chembl_targets(
+            data, Path(tmp), {"P1": ["c1"], "P2": ["c1"]},
+            {"P1": "test", "P2": "test"})
+
+        # rstrip("\n") only: strip() would eat the trailing empty columns of
+        # the last row, which are exactly what this test checks.
+        rows = [l.split("\t") for l in out.read_text().rstrip("\n").split("\n")]
+    header, p1, p2 = rows[0], rows[1], rows[2]
+    assert header[-2:] == ["ext_pocket_rmsd", "ext_pocket_entry"]
+    assert p1[1] == "test", "a close external pocket must not demote the target"
+    assert p1[-2] == "0.372" and p1[-1] == "biolip.1abc_LIG_A_1"
+    assert p2[-2] == "" and p2[-1] == "", \
+        "a target with no external match must be blank, not zero"
+
+
+def test_columns_are_absent_when_stage_8_has_not_run():
+    """Blank would be honest, but a 0.0 default would read as 'identical to an
+    external pocket'. Leaving the columns off says 'not measured'."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data = _targets_fixture(tmp, with_external=False)
+        s = TargetSplitter(log_level="CRITICAL")
+        out = s._write_chembl_targets(
+            data, Path(tmp), {"P1": ["c1"]}, {"P1": "train"})
+        header = out.read_text().split("\n")[0].split("\t")
+    assert header == ["uniprot", "split", "n_actives", "n_decoys"]

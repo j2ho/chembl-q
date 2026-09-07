@@ -472,10 +472,11 @@ def external_pockets(external_fasta, biolip_dir, pdbbind_dir, output,
               help='External pocket cache built by external-pockets')
 @click.option('--pocket-radius', type=float, default=8.0, show_default=True,
               help='Pocket radius in A, must match the cache and stage 5')
-@click.option('--rmsd-report', type=float, default=4.0, show_default=True,
-              help='Report every pair at or below this RMSD. Deliberately '
-                   'looser than any demotion threshold so the threshold can '
-                   'be changed without recomputing the sweep.')
+@click.option('--rmsd-report', type=float, default=2.0, show_default=True,
+              help='Report every pair at or below this RMSD. 2.0 is the same '
+                   'line stage 6 uses to call two receptors the same pocket. '
+                   'Raising it grows the file fast and buys little: 56% of '
+                   'all pairs sit under 4.0 A, against 0.5% under 2.0.')
 @click.option('--min-matched-residues', type=int, default=15, show_default=True,
               help='Minimum superposed residues for a hit to count')
 @click.option('--workers', '-n', type=int, default=8, show_default=True)

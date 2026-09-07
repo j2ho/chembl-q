@@ -242,17 +242,22 @@ class ExternalPocketLeakage:
         output: Optional[Path] = None,
         best_output: Optional[Path] = None,
         pocket_radius: float = 8.0,
-        rmsd_report: float = 4.0,
+        rmsd_report: float = 2.0,
         min_matched: int = 15,
         workers: int = 8,
     ) -> Tuple[Path, Path]:
         """Score every ChEMBL pocket against every external pocket.
 
         Writes two files: the hits under rmsd_report, and the single closest
-        external pocket per target. The reporting cutoff is deliberately
-        looser than any threshold a split would use, so raising or lowering
-        the demotion threshold later is a filter over this file rather than
-        another full sweep.
+        external pocket per target. Both are shipped with the dataset. They
+        are reported, not used to filter the split: cutting the test set on
+        pocket similarity removes the data-rich targets, because a fold that
+        has been drugged hard is also one PDBbind and BioLiP hold many
+        structures of.
+
+        The per-target best match is what a reader needs to stratify, and it
+        is carried into chembl_targets.tsv. The hits file is the detail
+        behind it.
         """
         from .receptor_similarity import ReceptorSimilarity, chembl_pocket
 
