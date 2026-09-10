@@ -204,6 +204,7 @@ ol.rules li::before {
   display: grid; place-items: center;
 }
 .rule-h { font-family: var(--f-head); font-weight: 600; }
+.fine { font-size: .84rem; color: var(--muted); }
 .rule-n { font-family: var(--f-mono); font-size: .8rem; color: var(--muted); white-space: nowrap; }
 .crossfig { margin-top: 2.4rem; max-width: 700px; }
 .two-up { display: grid; gap: 1.1rem; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
@@ -328,12 +329,11 @@ footer p { color: var(--ink-2); }
     <h1 class="title">ChEMBL<span>&#8209;</span>Q</h1>
     <p class="tagline">A leakage-resistant virtual screening benchmark, curated from ChEMBL 36</p>
     <p class="lede">
-      Most released scoring models are trained on PDBbind and BioLiP, and ChEMBL-Q is built
-      so they can be benchmarked without retraining. That only means something if the test
-      set is genuinely unseen, so every pocket here was measured against all 38,825 pockets
-      in those two sets &mdash; <em>structurally</em>, not just by sequence &mdash; and 1,072
-      targets were held out of the test set on the evidence. The measurement ships with the
-      data.
+      Most released scoring models are trained on PDBbind and BioLiP. Every DUD-E target and
+      all 15 LIT-PCBA targets are already in there &mdash; same sequences, and for DUD-E the
+      same deposited structures &mdash; so scoring on them measures recall as much as ranking.
+      ChEMBL-Q holds those out: 1,072 targets removed from the test set, and the overlap that
+      remains measured, published, and left in the open rather than quietly deleted.
     </p>
 
     <dl class="band">
@@ -347,42 +347,58 @@ footer p { color: var(--ink-2); }
 
   <section id="problem">
     <p class="kicker">the problem</p>
-    <h2>Sequence separation is not the same as a model not having seen it</h2>
+    <h2>A PDBbind-trained model has already seen the benchmarks it is scored on</h2>
     <div class="col">
       <p>
-        The usual way to hold out a test set is to cluster sequences and keep the clusters
-        apart. That is necessary and it is not sufficient. Two proteins can share a binding
-        site while sitting far apart in sequence space, and a model trained on structures has
-        learned the site, not the alignment.
-      </p>
-      <p>
-        Inside ChEMBL alone the two signals barely overlap. Of the 4,540 target pairs whose
-        pockets superpose within 2&nbsp;&Aring;, only 561 are also caught at 0.4 sequence
-        identity. The other <strong>3,979 are invisible to a sequence-based split</strong>.
-      </p>
-      <p>
-        So ChEMBL-Q measures the pocket directly. Every one of its 1,413 pockets is superposed
-        against all 38,825 pockets extracted from PDBbind and BioLiP &mdash; 54.6 million
-        comparisons &mdash; by order-free Hungarian matching rather than a sequence-ordered
-        alignment, because cross-fold similarity is exactly the case a sequence-ordered method
-        cannot see.
+        DUD-E and LIT-PCBA were assembled from targets that have crystal structures, which is
+        the same criterion that put those targets in PDBbind and BioLiP. So the sets overlap,
+        and the overlap is close to total. We measured it with the rules and the superposition
+        described below, applying them to all three benchmarks through one code path.
       </p>
     </div>
 
-    <div class="box alert">
-      <span class="tag">the bug this found</span>
+    <div class="tbl">
+      <table>
+        <caption>how much of each benchmark the external sets already contain</caption>
+        <thead>
+          <tr>
+            <th>benchmark</th><th>seen by</th><th class="r">targets</th>
+            <th class="r">sequence homologue</th>
+            <th class="r">pocket within 1&nbsp;&Aring;</th>
+            <th class="r">median pocket RMSD</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>DUD-E</td><td class="k">PDBbind</td><td class="r">102</td><td class="r">86.3%</td><td class="r">92.2%</td><td class="r">0.00 &Aring;</td></tr>
+          <tr><td>DUD-E</td><td class="k">+ BioLiP</td><td class="r">102</td><td class="r">94.1%</td><td class="r"><strong>100%</strong></td><td class="r">0.00 &Aring;</td></tr>
+          <tr><td>LIT-PCBA</td><td class="k">PDBbind</td><td class="r">15</td><td class="r">93.3%</td><td class="r">78.6%</td><td class="r">0.13 &Aring;</td></tr>
+          <tr><td>LIT-PCBA</td><td class="k">+ BioLiP</td><td class="r">15</td><td class="r"><strong>100%</strong></td><td class="r">92.9%</td><td class="r">0.00 &Aring;</td></tr>
+          <tr><td>ChEMBL-Q test</td><td class="k">PDBbind</td><td class="r">409</td><td class="r">0%</td><td class="r">11.1%</td><td class="r">2.23 &Aring;</td></tr>
+          <tr><td>ChEMBL-Q test</td><td class="k">+ BioLiP</td><td class="r">409</td><td class="r">0%</td><td class="r">14.6%</td><td class="r">2.06 &Aring;</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col" style="margin-top: 1.6rem">
       <p>
-        Our own sequence rule was broken, and the pocket measurement is what exposed it. We
-        blocked a target from the test set when an external hit covered 80% of
-        <strong>the ChEMBL query</strong>. But what gets crystallised is a domain, while a
-        ChEMBL target is a whole UniProt entry. IGF2R is 2,491 residues and its PDBbind entry
-        is a 182-residue construct, so the alignment covered 7% of the query and the target
-        sailed into the test set with its own structure sitting in PDBbind.
+        Every DUD-E target has a pocket within 1&nbsp;&Aring; of something in PDBbind or BioLiP,
+        and for more than half the distance is 0.00&nbsp;&Aring; &mdash; the same deposited
+        structure. All 15 LIT-PCBA targets have a sequence homologue there. Scoring a
+        structure-trained model on either set measures how well it recalls its training
+        receptors, mixed in with whatever ranking ability it has.
       </p>
       <p>
-        120 test targets had their exact representative PDB entry in BioLiP or PDBbind at pocket
-        RMSD 0.000. Coverage is now measured over the external sequence, where those same hits
-        cover a median of 1.00.
+        ChEMBL-Q's 0% is not a discovery: holding those targets out <em>is</em> the rule, and
+        the next section states it. The pocket column is the informative one, because nothing
+        in the split is decided on geometry. Pocket overlap falls from 100% to 14.6% as a
+        consequence of separating on sequence and structure identity, not because any pocket
+        was filtered.
+      </p>
+      <p class="fine">
+        LIT-PCBA ships several structures per target; a target counts as overlapping if its
+        closest structure does. Pocket figures cover the 371 ChEMBL-Q and 14 LIT-PCBA targets
+        whose representative structure yields a pocket of at least 6 residues at an
+        8&nbsp;&Aring; radius.
       </p>
     </div>
   </section>
@@ -670,6 +686,53 @@ PDB_ID,Chain,Aligned_File,Ligand_Name,Center_X,Center_Y,Center_Z
           <tr><td><span class="tag-pill r">train</span></td><td class="r">1,004</td><td class="r">79,828</td><td class="r">15</td><td class="r">571</td><td class="r">0.27 &Aring;</td></tr>
         </tbody>
       </table>
+    </div>
+
+    <h3 style="margin-top:2.8rem">Compounds, not just receptors</h3>
+    <div class="col">
+      <p>
+        Everything above is about the protein. The compounds leak too, and by a different
+        route. ChEMBL-Q splits on targets, so a compound active against a test target may
+        also be active against a train target and appear on both sides. That is not a defect
+        of the split so much as a property of splitting on targets at all, but it is real and
+        it is the largest overlap anywhere in this dataset.
+      </p>
+    </div>
+
+    <div class="tbl">
+      <table>
+        <caption>test compounds that already appear elsewhere, by ECFP4 and InChIKey</caption>
+        <thead>
+          <tr><th>benchmark</th><th>compared with</th><th class="r">unique</th>
+              <th class="r">same compound</th><th class="r">shared scaffold</th>
+              <th class="r">nearest &ge;0.7</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>DUD-E</td><td class="k">PDBbind + BioLiP</td><td class="r">20,489</td><td class="r">4.2%</td><td class="r">16.4%</td><td class="r">16.0%</td></tr>
+          <tr><td>LIT-PCBA</td><td class="k">PDBbind + BioLiP</td><td class="r">7,761</td><td class="r">1.0%</td><td class="r">17.3%</td><td class="r">2.4%</td></tr>
+          <tr><td>ChEMBL-Q test</td><td class="k">PDBbind + BioLiP</td><td class="r">7,207</td><td class="r">4.0%</td><td class="r">17.3%</td><td class="r">7.6%</td></tr>
+          <tr><td>ChEMBL-Q test</td><td class="k">its own train actives</td><td class="r">7,207</td><td class="r"><strong>14.2%</strong></td><td class="r"><strong>29.7%</strong></td><td class="r"><strong>19.8%</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col" style="margin-top: 1.6rem">
+      <p>
+        Against the crystallised ligands of PDBbind and BioLiP the three benchmarks sit close
+        together, and LIT-PCBA is the cleanest of them. Against its own training actives
+        ChEMBL-Q is not clean at all: <strong>14.2% of test compounds are also train
+        compounds</strong>, 29.7% share a Murcko scaffold with one, and 15.0% have a training
+        neighbour at Tanimoto 0.9 or above. DUD-E and LIT-PCBA have no comparable number
+        because neither defines a training split.
+      </p>
+      <p>
+        A model can exploit that without looking at a receptor at all. If you need a
+        compound-disjoint evaluation, build it from the shipped per-target
+        <code>actives.tsv</code> files rather than assuming the target split gave you one; the
+        ligand-only control belongs in any benchmark report using this dataset. Removing the
+        overlap here instead was not obviously right &mdash; it would delete a compound from
+        the target it was measured against because of a measurement on a different target.
+      </p>
     </div>
 
     <div class="box alert">
