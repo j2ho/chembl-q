@@ -357,3 +357,40 @@ def test_homologue_search_reads_coverage_from_the_query_side():
 
     assert "P11717" in blocked, "a fully covered external sequence must block"
     assert "P99999" not in blocked, "a fragment of the external sequence must not"
+
+
+def test_demotion_measures_coverage_on_both_sides():
+    """A short train sequence sitting whole inside a long test target counts.
+
+    Q08209 is 521 residues and the train target P67775 is 309; their 283-residue
+    alignment at 0.43 identity covers 92% of the train sequence and 54% of the
+    test one. Measuring only over the query let it stay in the test set, which
+    is the same coverage-direction mistake the external rule already fixed.
+    """
+    import tempfile
+    from unittest.mock import patch
+
+    rows = [
+        # query=test target, target=train side, fident, alnlen, qlen, tlen
+        ("Q08209", "chembltrain.P67775", "0.43", "283", "521", "309"),
+        ("P99998", "chembltrain.P00001", "0.99", "40", "500", "600"),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        td = Path(tmp)
+        train_fasta = td / "train.fasta"
+        train_fasta.write_text(">chembltrain.P67775\nMMMM\n")
+        # round 2 finds nothing, so the loop stops after one pass
+        (td / "demote_hits1.tsv").write_text(
+            "".join("\t".join(r) + "\n" for r in rows))
+        (td / "demote_hits2.tsv").write_text("")
+
+        s = TargetSplitter(seqid=0.4, log_level="CRITICAL")
+        with patch("chembl_curator.splitter.subprocess.run"):
+            demoted = s._demote_test_targets_close_to_train(
+                {"Q08209", "P99998"}, train_fasta,
+                {"Q08209": "AAAA", "P99998": "CCCC"}, td)
+
+    assert "Q08209" in demoted, \
+        "a train sequence covered end to end must demote the test target"
+    assert "P99998" not in demoted, \
+        "40 residues of either sequence is a fragment, not evidence"

@@ -23,6 +23,7 @@
   --red:      #af3029;   /* red-600     */
   --red-bg:   #f7e0dd;
   --amber:    #ad8301;   /* yellow-600  */
+  --cyan:     #24837b;   /* cyan-600    */
 
   --f-head: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
   --f-body: "IBM Plex Serif", Georgia, "Times New Roman", serif;
@@ -47,6 +48,7 @@
     --red:     #d14d41;
     --red-bg:  #3a201d;
     --amber:   #d0a215;
+    --cyan:    #3aa99f;
   }
 }
 :root[data-theme="dark"] {
@@ -64,6 +66,7 @@
   --red:     #d14d41;
   --red-bg:  #3a201d;
   --amber:   #d0a215;
+  --cyan:    #3aa99f;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -206,6 +209,14 @@ ol.rules li::before {
 .rule-h { font-family: var(--f-head); font-weight: 600; }
 .fine { font-size: .84rem; color: var(--muted); }
 .rule-n { font-family: var(--f-mono); font-size: .8rem; color: var(--muted); white-space: nowrap; }
+.wide-fig { max-width: 760px; }
+.wide-fig .panel svg { display: block; width: 100%; height: auto; margin-top: .3rem; }
+.legend { font-family: var(--f-head); font-weight: 600; margin-right: .55rem; }
+svg .ax { stroke: var(--rule-2); stroke-width: 1; }
+svg .tick { stroke: var(--rule-2); stroke-width: 1; }
+svg .lbl { font-family: var(--f-mono); font-size: 9px; fill: var(--muted); }
+svg .ln { fill: none; stroke-width: 1.6; stroke-linejoin: round; }
+svg .ln.dash { stroke: var(--muted); stroke-dasharray: 3 2; stroke-width: 1.2; }
 .crossfig { margin-top: 2.4rem; max-width: 700px; }
 .two-up { display: grid; gap: 1.1rem; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
 .panel { border: 1px solid var(--rule-2); background: var(--sunk); padding: 1rem 1.1rem 1.1rem; }
@@ -245,6 +256,7 @@ thead th {
   color: var(--muted); border-bottom: 2px solid var(--ink); padding-bottom: .45rem;
 }
 tbody td { border-bottom: 1px solid var(--rule); }
+tbody td[rowspan] { vertical-align: top; }
 tbody tr:last-child td { border-bottom: 2px solid var(--ink); }
 td.r, th.r { text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
 td.k { font-family: var(--f-mono); font-size: .87rem; white-space: nowrap; }
@@ -329,19 +341,22 @@ footer p { color: var(--ink-2); }
     <h1 class="title">ChEMBL<span>&#8209;</span>Q</h1>
     <p class="tagline">A leakage-resistant virtual screening benchmark, curated from ChEMBL 36</p>
     <p class="lede">
-      Most released scoring models are trained on PDBbind and BioLiP. Every DUD-E target and
-      all 15 LIT-PCBA targets are already in there &mdash; same sequences, and for DUD-E the
-      same deposited structures &mdash; so scoring on them measures recall as much as ranking.
-      ChEMBL-Q holds those out: 1,072 targets removed from the test set, and the overlap that
-      remains measured, published, and left in the open rather than quietly deleted.
-    </p>
+      Most released virtual screening models are trained on PDBbind or BioLiP and then scored
+      on DUD-E, DEKOIS&nbsp;2.0 or LIT-PCBA. Those benchmarks were built from targets that have
+      crystal structures, which is the criterion that put the same targets in PDBbind and
+      BioLiP, so the models are being scored on receptors they were trained on.
+      ChEMBL-Q keeps the two apart. <strong>1,006 targets</strong> are offered for training and
+      they are the ones those sets already cover; <strong>407</strong> are held back as the
+      benchmark, and none of them has a homologue in PDBbind, in BioLiP, or in the training
+      split itself. Whatever a model was trained on, it can be scored here.
+    </p> 
 
     <dl class="band">
       <div><dt>targets</dt><dd class="n">1,413<small>single-pocket, structure-backed</small></dd></div>
       <div><dt>actives</dt><dd class="n">229,279<small>88,192 cluster representatives</small></dd></div>
       <div><dt>active&ndash;decoy pairs</dt><dd class="n">2.61 M<small>receptor-aware selection</small></dd></div>
       <div><dt>measured inactives</dt><dd class="n">48,547<small>experimental, kept apart from decoys</small></dd></div>
-      <div><dt>test / train</dt><dd class="n">409 / 1,004<small>test is ChEMBL-only</small></dd></div>
+      <div><dt>test / train</dt><dd class="n">407 / 1,006<small>test is ChEMBL-only</small></dd></div>
     </dl>
   </section>
 
@@ -350,10 +365,11 @@ footer p { color: var(--ink-2); }
     <h2>A PDBbind-trained model has already seen the benchmarks it is scored on</h2>
     <div class="col">
       <p>
-        DUD-E and LIT-PCBA were assembled from targets that have crystal structures, which is
-        the same criterion that put those targets in PDBbind and BioLiP. So the sets overlap,
-        and the overlap is close to total. We measured it with the rules and the superposition
-        described below, applying them to all three benchmarks through one code path.
+        DUD-E, DEKOIS 2.0 and LIT-PCBA were assembled from targets that have crystal structures,
+        which is the same criterion that put those targets in PDBbind and BioLiP. So the sets
+        overlap, and the overlap is close to total. We measured it with the rules and the
+        superposition described below, applying them to all four benchmarks through one code
+        path.
       </p>
     </div>
 
@@ -369,12 +385,14 @@ footer p { color: var(--ink-2); }
           </tr>
         </thead>
         <tbody>
-          <tr><td>DUD-E</td><td class="k">PDBbind</td><td class="r">102</td><td class="r">86.3%</td><td class="r">92.2%</td><td class="r">0.00 &Aring;</td></tr>
-          <tr><td>DUD-E</td><td class="k">+ BioLiP</td><td class="r">102</td><td class="r">94.1%</td><td class="r"><strong>100%</strong></td><td class="r">0.00 &Aring;</td></tr>
-          <tr><td>LIT-PCBA</td><td class="k">PDBbind</td><td class="r">15</td><td class="r">93.3%</td><td class="r">78.6%</td><td class="r">0.13 &Aring;</td></tr>
+          <tr><td>DUD-E</td><td class="k">PDBbind</td><td class="r">102</td><td class="r">92.2%</td><td class="r">92.2%</td><td class="r">0.00 &Aring;</td></tr>
+          <tr><td>DUD-E</td><td class="k">+ BioLiP</td><td class="r">102</td><td class="r">97.1%</td><td class="r"><strong>100%</strong></td><td class="r">0.00 &Aring;</td></tr>
+          <tr><td>DEKOIS 2.0</td><td class="k">PDBbind</td><td class="r">81</td><td class="r">97.5%</td><td class="r">90.1%</td><td class="r">0.00 &Aring;</td></tr>
+          <tr><td>DEKOIS 2.0</td><td class="k">+ BioLiP</td><td class="r">81</td><td class="r"><strong>100%</strong></td><td class="r">98.8%</td><td class="r">0.00 &Aring;</td></tr>
+          <tr><td>LIT-PCBA</td><td class="k">PDBbind</td><td class="r">15</td><td class="r"><strong>100%</strong></td><td class="r">78.6%</td><td class="r">0.13 &Aring;</td></tr>
           <tr><td>LIT-PCBA</td><td class="k">+ BioLiP</td><td class="r">15</td><td class="r"><strong>100%</strong></td><td class="r">92.9%</td><td class="r">0.00 &Aring;</td></tr>
-          <tr><td>ChEMBL-Q test</td><td class="k">PDBbind</td><td class="r">409</td><td class="r">0%</td><td class="r">11.1%</td><td class="r">2.23 &Aring;</td></tr>
-          <tr><td>ChEMBL-Q test</td><td class="k">+ BioLiP</td><td class="r">409</td><td class="r">0%</td><td class="r">14.6%</td><td class="r">2.06 &Aring;</td></tr>
+          <tr><td>ChEMBL-Q test</td><td class="k">PDBbind</td><td class="r">407</td><td class="r">0%</td><td class="r">11.1%</td><td class="r">2.23 &Aring;</td></tr>
+          <tr><td>ChEMBL-Q test</td><td class="k">+ BioLiP</td><td class="r">407</td><td class="r">0%</td><td class="r">14.6%</td><td class="r">2.06 &Aring;</td></tr>
         </tbody>
       </table>
     </div>
@@ -383,9 +401,9 @@ footer p { color: var(--ink-2); }
       <p>
         Every DUD-E target has a pocket within 1&nbsp;&Aring; of something in PDBbind or BioLiP,
         and for more than half the distance is 0.00&nbsp;&Aring; &mdash; the same deposited
-        structure. All 15 LIT-PCBA targets have a sequence homologue there. Scoring a
-        structure-trained model on either set measures how well it recalls its training
-        receptors, mixed in with whatever ranking ability it has.
+        structure. Every DEKOIS 2.0 and LIT-PCBA target has a sequence homologue there.
+        Scoring a structure-trained model on any of the three measures how well it recalls
+        its training receptors, mixed in with whatever ranking ability it has.
       </p>
       <p>
         ChEMBL-Q's 0% is not a discovery: holding those targets out <em>is</em> the rule, and
@@ -396,7 +414,7 @@ footer p { color: var(--ink-2); }
       </p>
       <p class="fine">
         LIT-PCBA ships several structures per target; a target counts as overlapping if its
-        closest structure does. Pocket figures cover the 371 ChEMBL-Q and 14 LIT-PCBA targets
+        closest structure does. Pocket figures cover the 369 ChEMBL-Q and 14 LIT-PCBA targets
         whose representative structure yields a pocket of at least 6 residues at an
         8&nbsp;&Aring; radius.
       </p>
@@ -427,13 +445,15 @@ footer p { color: var(--ink-2); }
           was added. <span class="rule-n">680 targets</span>
         </li>
         <li>
-          <span class="rule-h">Proximity to train.</span> After clustering, any test target
-          still within 0.4 identity of a train sequence is demoted, iterated to a fixed point.
-          <span class="rule-n">1 target</span>
+          <span class="rule-h">Proximity to train.</span> After clustering, any test target still within 0.4 identity of a train sequence is
+          demoted, iterated to a fixed point. Coverage counts over whichever of the two
+          sequences the alignment spans, so a short training sequence sitting whole inside a
+          long target still counts.
+          <span class="rule-n">3 targets</span>
         </li>
       </ol>
       <p>
-        1,072 targets in total. Only then, as a check on work already done, comes the pocket
+        1,074 targets in total. Only then, as a check on work already done, comes the pocket
         measurement: for every target, the distance to its closest PDBbind or BioLiP pocket.
         If the rules above did their job the two splits should separate here too, and they do.
       </p>
@@ -445,12 +465,12 @@ footer p { color: var(--ink-2); }
           <div class="plot-row">
             <div class="plot-key">
               <span class="chip" style="background: var(--red)"></span>
-              Train &middot; 987 targets
-              <span class="sub">median 0.27&nbsp;&Aring; &mdash; 48% sit within a quarter of an &aring;ngstr&ouml;m of something in PDBbind or BioLiP</span>
+              Train &middot; 989 targets
+              <span class="sub">median 0.28&nbsp;&Aring; &mdash; 48% sit within a quarter of an &aring;ngstr&ouml;m of something in PDBbind or BioLiP</span>
             </div>
             <svg viewBox="0 0 640 160" width="100%" height="160" preserveAspectRatio="none" role="img"
                  aria-label="Histogram of closest external pocket RMSD for train targets, sharply peaked at 0 to 0.25 angstroms">
-              <g class="f-train"><rect x="2" y="4.8" width="36" height="145.2"/><rect x="42" y="99.3" width="36" height="50.7"/><rect x="82" y="118.2" width="36" height="31.8"/><rect x="122" y="140.7" width="36" height="9.3"/><rect x="162" y="143.1" width="36" height="6.9"/><rect x="202" y="142.2" width="36" height="7.8"/><rect x="242" y="145.8" width="36" height="4.2"/><rect x="282" y="140.7" width="36" height="9.3"/><rect x="322" y="129.9" width="36" height="20.1"/><rect x="362" y="139.2" width="36" height="10.8"/><rect x="402" y="147.3" width="36" height="2.7"/><rect x="482" y="149.7" width="36" height="0.3"/></g>
+              <g class="f-train"><rect x="2" y="5.1" width="36" height="144.9"/><rect x="42" y="99.3" width="36" height="50.7"/><rect x="82" y="118.2" width="36" height="31.8"/><rect x="122" y="140.7" width="36" height="9.3"/><rect x="162" y="143.1" width="36" height="6.9"/><rect x="202" y="142.2" width="36" height="7.8"/><rect x="242" y="145.5" width="36" height="4.5"/><rect x="282" y="140.7" width="36" height="9.3"/><rect x="322" y="129.9" width="36" height="20.1"/><rect x="362" y="138.9" width="36" height="11.1"/><rect x="402" y="147.3" width="36" height="2.7"/><rect x="482" y="149.7" width="36" height="0.3"/></g>
               <line class="base-line" x1="0" y1="150" x2="640" y2="150"/>
             </svg>
           </div>
@@ -458,12 +478,12 @@ footer p { color: var(--ink-2); }
           <div class="plot-row">
             <div class="plot-key">
               <span class="chip" style="background: var(--blue)"></span>
-              Test &middot; 371 targets
+              Test &middot; 369 targets
               <span class="sub">median 2.06&nbsp;&Aring; &mdash; the mode falls where train has almost nothing</span>
             </div>
             <svg viewBox="0 0 640 160" width="100%" height="160" preserveAspectRatio="none" role="img"
                  aria-label="Histogram of closest external pocket RMSD for test targets, peaked at 2.0 to 2.25 angstroms">
-              <g class="f-test"><rect x="42" y="141.9" width="36" height="8.1"/><rect x="82" y="129.0" width="36" height="21.0"/><rect x="122" y="135.3" width="36" height="14.7"/><rect x="162" y="135.3" width="36" height="14.7"/><rect x="202" y="136.2" width="36" height="13.8"/><rect x="242" y="124.2" width="36" height="25.8"/><rect x="282" y="113.7" width="36" height="36.3"/><rect x="322" y="57.9" width="36" height="92.1"/><rect x="362" y="89.4" width="36" height="60.6"/><rect x="402" y="140.4" width="36" height="9.6"/><rect x="442" y="147.6" width="36" height="2.4"/><rect x="482" y="149.1" width="36" height="0.9"/></g>
+              <g class="f-test"><rect x="42" y="141.9" width="36" height="8.1"/><rect x="82" y="129.0" width="36" height="21.0"/><rect x="122" y="135.3" width="36" height="14.7"/><rect x="162" y="135.3" width="36" height="14.7"/><rect x="202" y="136.2" width="36" height="13.8"/><rect x="242" y="124.8" width="36" height="25.2"/><rect x="282" y="113.4" width="36" height="36.6"/><rect x="322" y="57.3" width="36" height="92.7"/><rect x="362" y="89.7" width="36" height="60.3"/><rect x="402" y="140.1" width="36" height="9.9"/><rect x="442" y="147.6" width="36" height="2.4"/><rect x="482" y="149.1" width="36" height="0.9"/></g>
               <line class="base-line" x1="0" y1="150" x2="640" y2="150"/>
             </svg>
           </div>
@@ -567,20 +587,20 @@ PDB_ID,Chain,Aligned_File,Ligand_Name,Center_X,Center_Y,Center_Z
     <h2>The overlap that remains is between different proteins</h2>
     <div class="col">
       <p>
-        1,072 targets were held out of the test set: 978 for direct sequence homology to PDBbind
-        or BioLiP, and 680 because they were built from a PDB entry those sets already hold.
-        What survives that is a different question. Of the 371 test targets with a measurable
-        external match, 166 still sit within 2&nbsp;&Aring; of some external pocket. Not one of
-        them is the same protein:
+        1,074 targets were held out of the test set: 978 for direct sequence homology to PDBbind
+        or BioLiP, 680 because they were built from a PDB entry those sets already hold, and 3
+        for proximity to a training sequence. What survives that is a different question. Of
+        the 369 test targets with a measurable external match, 165 still sit within
+        2&nbsp;&Aring; of some external pocket. Not one of them is the same protein:
       </p>
     </div>
 
     <div class="tbl">
       <table>
-        <caption>the 166 test targets within 2 &Aring; of an external pocket</caption>
+        <caption>the 165 test targets within 2 &Aring; of an external pocket</caption>
         <thead><tr><th>what the match is</th><th class="r">targets</th><th class="r">median RMSD</th></tr></thead>
         <tbody>
-          <tr><td>a different protein entirely</td><td class="r">166</td><td class="r">1.39 &Aring;</td></tr>
+          <tr><td>a different protein entirely</td><td class="r">165</td><td class="r">1.37 &Aring;</td></tr>
           <tr><td>the same protein, another PDB entry</td><td class="r">0</td><td class="r">&mdash;</td></tr>
           <tr><td>its own representative PDB entry</td><td class="r">0</td><td class="r">&mdash;</td></tr>
         </tbody>
@@ -589,7 +609,7 @@ PDB_ID,Chain,Aligned_File,Ligand_Name,Center_X,Center_Y,Center_Z
 
     <div class="col" style="margin-top: 1.8rem">
       <p>
-        None of the 166 shares a PDB entry with PDBbind or BioLiP &mdash; that is now enforced,
+        None of the 165 shares a PDB entry with PDBbind or BioLiP &mdash; that is now enforced,
         not observed. Beyond that they are simply not close relatives:
         <strong>104 of them produce no sequence alignment with the matched entry at all</strong>,
         and among the 62 that do the median identity is 0.30 and the highest is 0.51. These are
@@ -649,11 +669,11 @@ PDB_ID,Chain,Aligned_File,Ligand_Name,Center_X,Center_Y,Center_Z
           <tr><th>cut at</th><th class="r">targets removed</th><th class="r">test left</th><th class="r">actives lost</th><th class="r">kinases lost</th></tr>
         </thead>
         <tbody>
-          <tr><td class="k">no cut</td><td class="r">0</td><td class="r">409</td><td class="r">0%</td><td class="r">0 of 12</td></tr>
-          <tr><td class="k">0.5 &Aring;</td><td class="r">10</td><td class="r">399</td><td class="r">2%</td><td class="r">2 of 12</td></tr>
-          <tr><td class="k">1.0 &Aring;</td><td class="r">54</td><td class="r">355</td><td class="r">22%</td><td class="r">6 of 12</td></tr>
-          <tr><td class="k">1.5 &Aring;</td><td class="r">89</td><td class="r">320</td><td class="r">34%</td><td class="r">9 of 12</td></tr>
-          <tr><td class="k">2.0 &Aring;</td><td class="r">166</td><td class="r">243</td><td class="r">56%</td><td class="r">9 of 12</td></tr>
+          <tr><td class="k">no cut</td><td class="r">0</td><td class="r">407</td><td class="r">0%</td><td class="r">0 of 12</td></tr>
+          <tr><td class="k">0.5 &Aring;</td><td class="r">10</td><td class="r">397</td><td class="r">2%</td><td class="r">2 of 12</td></tr>
+          <tr><td class="k">1.0 &Aring;</td><td class="r">54</td><td class="r">353</td><td class="r">22%</td><td class="r">6 of 12</td></tr>
+          <tr><td class="k">1.5 &Aring;</td><td class="r">89</td><td class="r">318</td><td class="r">34%</td><td class="r">9 of 12</td></tr>
+          <tr><td class="k">2.0 &Aring;</td><td class="r">165</td><td class="r">242</td><td class="r">56%</td><td class="r">9 of 12</td></tr>
         </tbody>
       </table>
     </div>
@@ -682,10 +702,114 @@ PDB_ID,Chain,Aligned_File,Ligand_Name,Center_X,Center_Y,Center_Z
           <tr><th>&nbsp;</th><th class="r">targets</th><th class="r">actives</th><th class="r">median actives</th><th class="r">&ge;10 actives</th><th class="r">median ext. RMSD</th></tr>
         </thead>
         <tbody>
-          <tr><td><span class="tag-pill t">test</span></td><td class="r">409</td><td class="r">8,364</td><td class="r">2</td><td class="r">93</td><td class="r">2.06 &Aring;</td></tr>
-          <tr><td><span class="tag-pill r">train</span></td><td class="r">1,004</td><td class="r">79,828</td><td class="r">15</td><td class="r">571</td><td class="r">0.27 &Aring;</td></tr>
+          <tr><td><span class="tag-pill t">test</span></td><td class="r">407</td><td class="r">8,355</td><td class="r">2</td><td class="r">93</td><td class="r">2.06 &Aring;</td></tr>
+          <tr><td><span class="tag-pill r">train</span></td><td class="r">1,006</td><td class="r">79,837</td><td class="r">15</td><td class="r">571</td><td class="r">0.28 &Aring;</td></tr>
         </tbody>
       </table>
+    </div>
+
+
+    <h3 style="margin-top:2.8rem">Does the overlap know which compounds are active?</h3>
+    <div class="col">
+      <p>
+        Counting shared compounds is not the whole question. What matters is whether the
+        overlap lines up with the label. For every active and every decoy, the nearest
+        PDBbind or BioLiP ligand by ECFP4 Tanimoto:
+      </p>
+    </div>
+
+    <figure class="crossfig wide-fig">
+      <div class="panel">
+        <h3>Actives only, all four benchmarks</h3>
+        <p class="panel-sub">
+          <span class="legend" style="color:var(--red)">DUD-E</span>
+          <span class="legend" style="color:var(--amber)">DEKOIS 2.0</span>
+          <span class="legend" style="color:var(--cyan)">LIT-PCBA</span>
+          <span class="legend" style="color:var(--blue)">ChEMBL-Q</span>
+          &nbsp;&middot;&nbsp; share of actives per 0.05 bin
+        </p>
+        <svg viewBox="0 0 646 212" width="100%" role="img" aria-label="Nearest-neighbour Tanimoto distributions for four benchmarks"><line class="ax" x1="26" y1="190" x2="640" y2="190"/><line class="tick" x1="26.0" y1="190" x2="26.0" y2="194"/><text class="lbl" x="26.0" y="205" text-anchor="middle">0.0</text><line class="tick" x1="148.8" y1="190" x2="148.8" y2="194"/><text class="lbl" x="148.8" y="205" text-anchor="middle">0.2</text><line class="tick" x1="271.6" y1="190" x2="271.6" y2="194"/><text class="lbl" x="271.6" y="205" text-anchor="middle">0.4</text><line class="tick" x1="394.4" y1="190" x2="394.4" y2="194"/><text class="lbl" x="394.4" y="205" text-anchor="middle">0.6</text><line class="tick" x1="517.2" y1="190" x2="517.2" y2="194"/><text class="lbl" x="517.2" y="205" text-anchor="middle">0.8</text><line class="tick" x1="640.0" y1="190" x2="640.0" y2="194"/><text class="lbl" x="640.0" y="205" text-anchor="middle">1.0</text><text class="lbl" x="21" y="193.0" text-anchor="end">0%</text><text class="lbl" x="21" y="104.0" text-anchor="end">13%</text><text class="lbl" x="21" y="15.0" text-anchor="end">26%</text><path class="ln" style="stroke:var(--red)" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,190.0L148.8,190.0L148.8,187.5L179.5,187.5L179.5,164.7L210.2,164.7L210.2,114.6L240.9,114.6L240.9,95.6L271.6,95.6L271.6,95.4L302.3,95.4L302.3,117.9L333.0,117.9L333.0,120.0L363.7,120.0L363.7,134.7L394.4,134.7L394.4,141.9L425.1,141.9L425.1,151.2L455.8,151.2L455.8,160.7L486.5,160.7L486.5,167.0L517.2,167.0L517.2,176.6L547.9,176.6L547.9,184.0L578.6,184.0L578.6,188.2L609.3,188.2L609.3,155.6L640.0,155.6"/><path class="ln" style="stroke:var(--amber)" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,190.0L148.8,190.0L148.8,186.1L179.5,186.1L179.5,150.8L210.2,150.8L210.2,106.1L240.9,106.1L240.9,98.8L271.6,98.8L271.6,87.4L302.3,87.4L302.3,114.6L333.0,114.6L333.0,132.6L363.7,132.6L363.7,142.6L394.4,142.6L394.4,146.0L425.1,146.0L425.1,156.9L455.8,156.9L455.8,170.4L486.5,170.4L486.5,164.5L517.2,164.5L517.2,173.8L547.9,173.8L547.9,183.6L578.6,183.6L578.6,189.1L609.3,189.1L609.3,151.9L640.0,151.9"/><path class="ln" style="stroke:var(--cyan)" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,189.7L148.8,189.7L148.8,184.4L179.5,184.4L179.5,141.7L210.2,141.7L210.2,47.4L240.9,47.4L240.9,22.4L271.6,22.4L271.6,43.3L302.3,43.3L302.3,115.6L333.0,115.6L333.0,143.8L363.7,143.8L363.7,171.0L394.4,171.0L394.4,178.2L425.1,178.2L425.1,184.4L455.8,184.4L455.8,186.1L486.5,186.1L486.5,187.3L517.2,187.3L517.2,188.7L547.9,188.7L547.9,189.7L578.6,189.7L578.6,190.0L609.3,190.0L609.3,182.1L640.0,182.1"/><path class="ln" style="stroke:var(--blue)" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,189.7L148.8,189.7L148.8,183.7L179.5,183.7L179.5,125.8L210.2,125.8L210.2,41.9L240.9,41.9L240.9,39.7L271.6,39.7L271.6,80.7L302.3,80.7L302.3,134.3L333.0,134.3L333.0,146.4L363.7,146.4L363.7,166.5L394.4,166.5L394.4,172.4L425.1,172.4L425.1,175.8L455.8,175.8L455.8,182.4L486.5,182.4L486.5,183.7L517.2,183.7L517.2,186.3L547.9,186.3L547.9,188.6L578.6,188.6L578.6,189.7L609.3,189.7L609.3,157.7L640.0,157.7"/></svg>
+      </div>
+      <div class="two-up" style="margin-top:1.1rem">
+        <div class="panel">
+          <h3>DUD-E</h3>
+          <p class="panel-sub">actives 0.483 &middot; decoys 0.343 &middot; gap +0.140</p>
+          <svg viewBox="0 0 646 212" width="100%" role="img" aria-label="dude actives against decoys"><line class="ax" x1="26" y1="190" x2="640" y2="190"/><line class="tick" x1="26.0" y1="190" x2="26.0" y2="194"/><text class="lbl" x="26.0" y="205" text-anchor="middle">0.0</text><line class="tick" x1="148.8" y1="190" x2="148.8" y2="194"/><text class="lbl" x="148.8" y="205" text-anchor="middle">0.2</text><line class="tick" x1="271.6" y1="190" x2="271.6" y2="194"/><text class="lbl" x="271.6" y="205" text-anchor="middle">0.4</text><line class="tick" x1="394.4" y1="190" x2="394.4" y2="194"/><text class="lbl" x="394.4" y="205" text-anchor="middle">0.6</text><line class="tick" x1="517.2" y1="190" x2="517.2" y2="194"/><text class="lbl" x="517.2" y="205" text-anchor="middle">0.8</text><line class="tick" x1="640.0" y1="190" x2="640.0" y2="194"/><text class="lbl" x="640.0" y="205" text-anchor="middle">1.0</text><text class="lbl" x="21" y="193.0" text-anchor="end">0%</text><text class="lbl" x="21" y="104.0" text-anchor="end">17%</text><text class="lbl" x="21" y="15.0" text-anchor="end">34%</text><path class="ln dash" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,189.2L148.8,189.2L148.8,175.1L179.5,175.1L179.5,93.8L210.2,93.8L210.2,17.3L240.9,17.3L240.9,69.8L271.6,69.8L271.6,124.8L302.3,124.8L302.3,163.0L333.0,163.0L333.0,175.9L363.7,175.9L363.7,184.5L394.4,184.5L394.4,186.9L425.1,186.9L425.1,188.8L455.8,188.8L455.8,189.1L486.5,189.1L486.5,189.5L517.2,189.5L517.2,189.4L547.9,189.4L547.9,189.8L578.6,189.8L578.6,190.0L609.3,190.0L609.3,189.5L640.0,189.5"/><path class="ln" style="stroke:var(--red)" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,190.0L148.8,190.0L148.8,188.1L179.5,188.1L179.5,170.7L210.2,170.7L210.2,132.3L240.9,132.3L240.9,117.8L271.6,117.8L271.6,117.6L302.3,117.6L302.3,134.9L333.0,134.9L333.0,136.4L363.7,136.4L363.7,147.7L394.4,147.7L394.4,153.2L425.1,153.2L425.1,160.3L455.8,160.3L455.8,167.6L486.5,167.6L486.5,172.4L517.2,172.4L517.2,179.7L547.9,179.7L547.9,185.4L578.6,185.4L578.6,188.6L609.3,188.6L609.3,163.7L640.0,163.7"/></svg>
+        </div>
+        <div class="panel">
+          <h3>DEKOIS 2.0</h3>
+          <p class="panel-sub">actives 0.464 &middot; decoys 0.357 &middot; gap +0.107</p>
+          <svg viewBox="0 0 646 212" width="100%" role="img" aria-label="dekois actives against decoys"><line class="ax" x1="26" y1="190" x2="640" y2="190"/><line class="tick" x1="26.0" y1="190" x2="26.0" y2="194"/><text class="lbl" x="26.0" y="205" text-anchor="middle">0.0</text><line class="tick" x1="148.8" y1="190" x2="148.8" y2="194"/><text class="lbl" x="148.8" y="205" text-anchor="middle">0.2</text><line class="tick" x1="271.6" y1="190" x2="271.6" y2="194"/><text class="lbl" x="271.6" y="205" text-anchor="middle">0.4</text><line class="tick" x1="394.4" y1="190" x2="394.4" y2="194"/><text class="lbl" x="394.4" y="205" text-anchor="middle">0.6</text><line class="tick" x1="517.2" y1="190" x2="517.2" y2="194"/><text class="lbl" x="517.2" y="205" text-anchor="middle">0.8</text><line class="tick" x1="640.0" y1="190" x2="640.0" y2="194"/><text class="lbl" x="640.0" y="205" text-anchor="middle">1.0</text><text class="lbl" x="21" y="193.0" text-anchor="end">0%</text><text class="lbl" x="21" y="104.0" text-anchor="end">17%</text><text class="lbl" x="21" y="15.0" text-anchor="end">34%</text><path class="ln dash" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,189.9L118.1,189.9L118.1,187.4L148.8,187.4L148.8,174.5L179.5,174.5L179.5,118.5L210.2,118.5L210.2,36.5L240.9,36.5L240.9,65.9L271.6,65.9L271.6,109.7L302.3,109.7L302.3,156.2L333.0,156.2L333.0,170.3L363.7,170.3L363.7,181.0L394.4,181.0L394.4,184.7L425.1,184.7L425.1,187.1L455.8,187.1L455.8,188.3L486.5,188.3L486.5,188.7L517.2,188.7L517.2,189.3L547.9,189.3L547.9,189.6L578.6,189.6L578.6,190.0L609.3,190.0L609.3,189.0L640.0,189.0"/><path class="ln" style="stroke:var(--amber)" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,190.0L148.8,190.0L148.8,187.0L179.5,187.0L179.5,160.0L210.2,160.0L210.2,125.9L240.9,125.9L240.9,120.3L271.6,120.3L271.6,111.6L302.3,111.6L302.3,132.3L333.0,132.3L333.0,146.1L363.7,146.1L363.7,153.8L394.4,153.8L394.4,156.4L425.1,156.4L425.1,164.7L455.8,164.7L455.8,175.0L486.5,175.0L486.5,170.5L517.2,170.5L517.2,177.6L547.9,177.6L547.9,185.1L578.6,185.1L578.6,189.3L609.3,189.3L609.3,160.9L640.0,160.9"/></svg>
+        </div>
+        <div class="panel">
+          <h3>LIT-PCBA</h3>
+          <p class="panel-sub">actives 0.392 &middot; decoys 0.400 &middot; gap -0.008</p>
+          <svg viewBox="0 0 646 212" width="100%" role="img" aria-label="litpcba actives against decoys"><line class="ax" x1="26" y1="190" x2="640" y2="190"/><line class="tick" x1="26.0" y1="190" x2="26.0" y2="194"/><text class="lbl" x="26.0" y="205" text-anchor="middle">0.0</text><line class="tick" x1="148.8" y1="190" x2="148.8" y2="194"/><text class="lbl" x="148.8" y="205" text-anchor="middle">0.2</text><line class="tick" x1="271.6" y1="190" x2="271.6" y2="194"/><text class="lbl" x="271.6" y="205" text-anchor="middle">0.4</text><line class="tick" x1="394.4" y1="190" x2="394.4" y2="194"/><text class="lbl" x="394.4" y="205" text-anchor="middle">0.6</text><line class="tick" x1="517.2" y1="190" x2="517.2" y2="194"/><text class="lbl" x="517.2" y="205" text-anchor="middle">0.8</text><line class="tick" x1="640.0" y1="190" x2="640.0" y2="194"/><text class="lbl" x="640.0" y="205" text-anchor="middle">1.0</text><text class="lbl" x="21" y="193.0" text-anchor="end">0%</text><text class="lbl" x="21" y="104.0" text-anchor="end">17%</text><text class="lbl" x="21" y="15.0" text-anchor="end">34%</text><path class="ln dash" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,189.7L148.8,189.7L148.8,186.9L179.5,186.9L179.5,162.7L210.2,162.7L210.2,96.5L240.9,96.5L240.9,57.9L271.6,57.9L271.6,70.9L302.3,70.9L302.3,125.1L333.0,125.1L333.0,146.3L363.7,146.3L363.7,172.0L394.4,172.0L394.4,180.4L425.1,180.4L425.1,185.0L455.8,185.0L455.8,187.1L486.5,187.1L486.5,188.7L517.2,188.7L517.2,189.5L547.9,189.5L547.9,189.7L578.6,189.7L578.6,189.9L609.3,189.9L609.3,188.0L640.0,188.0"/><path class="ln" style="stroke:var(--cyan)" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,189.7L148.8,189.7L148.8,185.7L179.5,185.7L179.5,153.0L210.2,153.0L210.2,80.9L240.9,80.9L240.9,61.8L271.6,61.8L271.6,77.8L302.3,77.8L302.3,133.1L333.0,133.1L333.0,154.7L363.7,154.7L363.7,175.4L394.4,175.4L394.4,180.9L425.1,180.9L425.1,185.7L455.8,185.7L455.8,187.0L486.5,187.0L486.5,187.9L517.2,187.9L517.2,189.0L547.9,189.0L547.9,189.7L578.6,189.7L578.6,190.0L609.3,190.0L609.3,184.0L640.0,184.0"/></svg>
+        </div>
+        <div class="panel">
+          <h3>ChEMBL-Q test</h3>
+          <p class="panel-sub">actives 0.388 &middot; decoys 0.426 &middot; gap -0.038</p>
+          <svg viewBox="0 0 646 212" width="100%" role="img" aria-label="chemblq actives against decoys"><line class="ax" x1="26" y1="190" x2="640" y2="190"/><line class="tick" x1="26.0" y1="190" x2="26.0" y2="194"/><text class="lbl" x="26.0" y="205" text-anchor="middle">0.0</text><line class="tick" x1="148.8" y1="190" x2="148.8" y2="194"/><text class="lbl" x="148.8" y="205" text-anchor="middle">0.2</text><line class="tick" x1="271.6" y1="190" x2="271.6" y2="194"/><text class="lbl" x="271.6" y="205" text-anchor="middle">0.4</text><line class="tick" x1="394.4" y1="190" x2="394.4" y2="194"/><text class="lbl" x="394.4" y="205" text-anchor="middle">0.6</text><line class="tick" x1="517.2" y1="190" x2="517.2" y2="194"/><text class="lbl" x="517.2" y="205" text-anchor="middle">0.8</text><line class="tick" x1="640.0" y1="190" x2="640.0" y2="194"/><text class="lbl" x="640.0" y="205" text-anchor="middle">1.0</text><text class="lbl" x="21" y="193.0" text-anchor="end">0%</text><text class="lbl" x="21" y="104.0" text-anchor="end">17%</text><text class="lbl" x="21" y="15.0" text-anchor="end">34%</text><path class="ln dash" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,189.9L148.8,189.9L148.8,187.3L179.5,187.3L179.5,156.4L210.2,156.4L210.2,103.8L240.9,103.8L240.9,96.3L271.6,96.3L271.6,108.0L302.3,108.0L302.3,136.5L333.0,136.5L333.0,143.7L363.7,143.7L363.7,157.9L394.4,157.9L394.4,163.1L425.1,163.1L425.1,168.6L455.8,168.6L455.8,180.7L486.5,180.7L486.5,184.0L517.2,184.0L517.2,186.5L547.9,186.5L547.9,188.5L578.6,188.5L578.6,189.4L609.3,189.4L609.3,165.9L640.0,165.9"/><path class="ln" style="stroke:var(--blue)" d="M26.0,190.0L56.7,190.0L56.7,190.0L87.4,190.0L87.4,190.0L118.1,190.0L118.1,189.8L148.8,189.8L148.8,185.2L179.5,185.2L179.5,140.9L210.2,140.9L210.2,76.8L240.9,76.8L240.9,75.0L271.6,75.0L271.6,106.4L302.3,106.4L302.3,147.4L333.0,147.4L333.0,156.7L363.7,156.7L363.7,172.0L394.4,172.0L394.4,176.5L425.1,176.5L425.1,179.1L455.8,179.1L455.8,184.2L486.5,184.2L486.5,185.2L517.2,185.2L517.2,187.2L547.9,187.2L547.9,188.9L578.6,188.9L578.6,189.8L609.3,189.8L609.3,165.3L640.0,165.3"/></svg>
+        </div>
+      </div>
+      <figcaption>
+        Coloured line, the benchmark's actives; grey dashed line, its decoys. DUD-E and
+        DEKOIS put their actives well to the right of their decoys: 16.0% and 15.7% of actives
+        have an external neighbour at 0.7 or above against 0.5% and 1.0% of decoys, a 32-fold
+        and 16-fold enrichment. A model that memorised those ligands can separate actives from
+        decoys with no receptor in hand. LIT-PCBA shows no gap, and ChEMBL-Q's runs the other
+        way, because its decoys are real ChEMBL actives of other targets and so sit in the same
+        chemical space as crystallised ligands rather than outside it.
+      </figcaption>
+    </figure>
+
+    <h3 style="margin-top:2.6rem">Conditioned on the protein</h3>
+    <div class="col">
+      <p>
+        Narrower, and closer to the real leakage route: not the whole ligand pool, but only the
+        ligands crystallised with proteins <em>homologous to the benchmark target itself</em>,
+        over 80% of the external sequence. The model saw this protein; did it also see
+        something that looks like the answer? Shown at two identity cuts: 0.4, the threshold
+        the split itself uses, and 0.9, which is effectively the same protein.
+      </p>
+    </div>
+
+    <div class="tbl">
+      <table>
+        <caption>actives against the ligands of their own protein's external entries</caption>
+        <thead><tr><th>benchmark</th><th class="k">identity</th>
+          <th class="r">targets with such an entry</th>
+          <th class="r">ligands gathered</th><th class="r">median Tanimoto</th>
+          <th class="r">&ge;0.7</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="2">DUD-E</td><td class="k">&ge; 0.4</td><td class="r">99 of 102</td><td class="r">16,833</td><td class="r">0.403</td><td class="r">12.1%</td></tr>
+          <tr><td class="k">&ge; 0.9</td><td class="r">54 of 102</td><td class="r">5,342</td><td class="r">0.329</td><td class="r">8.0%</td></tr>
+          <tr><td rowspan="2">DEKOIS 2.0</td><td class="k">&ge; 0.4</td><td class="r">81 of 81</td><td class="r">17,687</td><td class="r">0.363</td><td class="r">11.4%</td></tr>
+          <tr><td class="k">&ge; 0.9</td><td class="r">81 of 81</td><td class="r">6,572</td><td class="r">0.276</td><td class="r">8.2%</td></tr>
+          <tr><td rowspan="2">LIT-PCBA</td><td class="k">&ge; 0.4</td><td class="r">15 of 15</td><td class="r">2,023</td><td class="r">0.183</td><td class="r"><strong>0.1%</strong></td></tr>
+          <tr><td class="k">&ge; 0.9</td><td class="r">15 of 15</td><td class="r">1,090</td><td class="r">0.159</td><td class="r"><strong>0.1%</strong></td></tr>
+          <tr><td rowspan="2">ChEMBL-Q test</td><td class="k">&ge; 0.4</td><td class="r"><strong>0 of 407</strong></td><td class="r">&mdash;</td><td class="r">&mdash;</td><td class="r">&mdash;</td></tr>
+          <tr><td class="k">&ge; 0.9</td><td class="r"><strong>0 of 407</strong></td><td class="r">&mdash;</td><td class="r">&mdash;</td><td class="r">&mdash;</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col" style="margin-top:1.6rem">
+      <p>
+        LIT-PCBA is the interesting row. Every one of its targets is in PDBbind or BioLiP, yet
+        the compounds crystallised with those proteins look nothing like the actives it asks a
+        model to find: median Tanimoto 0.159, and one active in a thousand has a neighbour at
+        0.7. Protein-level containment and compound-level novelty are separable, and LIT-PCBA
+        has both at once. DUD-E and DEKOIS do not: even restricted to the same protein, about
+        one active in twelve has a near-duplicate already sitting in a crystal structure, and
+        loosening the identity cut to 0.4 only raises that.
+      </p>
+      <p>
+        ChEMBL-Q's dash is the split rule showing through rather than a measurement: no test
+        target has a homologous external entry, so there are no ligands to gather. It says
+        nothing about how novel the compounds are, which is what the next section measures and
+        where this dataset is weakest.
+      </p>
     </div>
 
     <h3 style="margin-top:2.8rem">Compounds, not just receptors</h3>
@@ -739,7 +863,7 @@ PDB_ID,Chain,Aligned_File,Ligand_Name,Center_X,Center_Y,Center_Z
       <span class="tag">known limitation</span>
       <p>
         The test set is small, and half its targets carry only a couple of actives. That is the
-        honest cost of holding out everything PDBbind and BioLiP have seen: 1,072 targets are
+        honest cost of holding out everything PDBbind and BioLiP have seen: 1,074 targets are
         held out of it, and the well-studied ones are exactly the ones
         those sets cover. 93 test targets have 10 or more actives. Pick a
         floor that suits your evaluation, and say which floor you picked.

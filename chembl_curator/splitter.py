@@ -237,6 +237,10 @@ class TargetSplitter:
 
         Runs to a fixed point: demoting a target grows train, which can pull in
         further test targets. Train only ever grows, so this terminates.
+
+        Coverage is taken over whichever of the two sequences the alignment
+        covers more of, matching _find_external_homologues rather than
+        contradicting it.
         """
         demoted: Set[str] = set()
         for round_no in range(1, 11):
@@ -265,7 +269,7 @@ class TargetSplitter:
                     str(query), str(db), str(hits), str(search_tmp),
                     "--threads", str(self.threads), "-s", "7.5",
                     "--max-seqs", "20000", "-e", "10000",
-                    "--format-output", "query,target,fident,alnlen,qlen",
+                    "--format-output", "query,target,fident,alnlen,qlen,tlen",
                 ],
                 check=True, capture_output=True,
             )
@@ -274,14 +278,22 @@ class TargetSplitter:
             with open(hits) as f:
                 for line in f:
                     parts = line.rstrip("\n").split("\t")
-                    if len(parts) < 5:
+                    if len(parts) < 6:
                         continue
                     try:
-                        fident, alnlen, qlen = (
-                            float(parts[2]), int(parts[3]), int(parts[4]))
+                        fident = float(parts[2])
+                        alnlen, qlen, tlen = (
+                            int(parts[3]), int(parts[4]), int(parts[5]))
                     except ValueError:
                         continue
-                    if fident >= self.seqid and alnlen / max(1, qlen) >= 0.8:
+                    # Whichever sequence the alignment covers, it is evidence.
+                    # Measuring only over the query repeated the coverage-
+                    # direction mistake the external rule already fixed: a
+                    # 309-residue train sequence sitting whole inside a
+                    # 521-residue test target covers 92% of the train sequence
+                    # and 54% of the test one, and slipped through.
+                    coverage = max(alnlen / max(1, qlen), alnlen / max(1, tlen))
+                    if fident >= self.seqid and coverage >= 0.8:
                         new.add(parts[0])
             if not new:
                 break
