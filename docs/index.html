@@ -207,6 +207,7 @@ ol.rules li::before {
   display: grid; place-items: center;
 }
 .rule-h { font-family: var(--f-head); font-weight: 600; }
+.dim { color: var(--muted); font-size: .85em; }
 .fine { font-size: .84rem; color: var(--muted); }
 .rule-n { font-family: var(--f-mono); font-size: .8rem; color: var(--muted); white-space: nowrap; }
 .wide-fig { max-width: 760px; }
@@ -375,42 +376,41 @@ footer p { color: var(--ink-2); }
 
     <div class="tbl">
       <table>
-        <caption>how much of each benchmark the external sets already contain</caption>
-        <thead>
-          <tr>
-            <th>benchmark</th><th>seen by</th><th class="r">targets</th>
-            <th class="r">sequence homologue</th>
-            <th class="r">pocket within 1&nbsp;&Aring;</th>
-            <th class="r">median pocket RMSD</th>
-          </tr>
-        </thead>
+        <caption>protein &mdash; benchmark targets with a homologue in the training corpus,
+          at 0.4 identity over 80% of whichever sequence the alignment spans</caption>
+        <thead><tr><th>benchmark</th><th class="r">targets</th><th class="r">PDBbind</th>
+          <th class="r">+ BioLiP</th><th class="r">ChEMBL-Q train</th><th class="r">all three</th></tr></thead>
         <tbody>
-          <tr><td>DUD-E</td><td class="k">PDBbind</td><td class="r">102</td><td class="r">92.2%</td><td class="r">92.2%</td><td class="r">0.00 &Aring;</td></tr>
-          <tr><td>DUD-E</td><td class="k">+ BioLiP</td><td class="r">102</td><td class="r">97.1%</td><td class="r"><strong>100%</strong></td><td class="r">0.00 &Aring;</td></tr>
-          <tr><td>DEKOIS 2.0</td><td class="k">PDBbind</td><td class="r">81</td><td class="r">97.5%</td><td class="r">90.1%</td><td class="r">0.00 &Aring;</td></tr>
-          <tr><td>DEKOIS 2.0</td><td class="k">+ BioLiP</td><td class="r">81</td><td class="r"><strong>100%</strong></td><td class="r">98.8%</td><td class="r">0.00 &Aring;</td></tr>
-          <tr><td>LIT-PCBA</td><td class="k">PDBbind</td><td class="r">15</td><td class="r"><strong>100%</strong></td><td class="r">78.6%</td><td class="r">0.13 &Aring;</td></tr>
-          <tr><td>LIT-PCBA</td><td class="k">+ BioLiP</td><td class="r">15</td><td class="r"><strong>100%</strong></td><td class="r">92.9%</td><td class="r">0.00 &Aring;</td></tr>
-          <tr><td>ChEMBL-Q test</td><td class="k">PDBbind</td><td class="r">407</td><td class="r">0%</td><td class="r">11.1%</td><td class="r">2.23 &Aring;</td></tr>
-          <tr><td>ChEMBL-Q test</td><td class="k">+ BioLiP</td><td class="r">407</td><td class="r">0%</td><td class="r">14.6%</td><td class="r">2.06 &Aring;</td></tr>
+          <tr><td>DUD-E</td><td class="r">102</td><td class="r">94.1%</td><td class="r">98.0%</td><td class="r">77.5%</td><td class="r"><strong>99.0%</strong></td></tr>
+          <tr><td>DEKOIS 2.0</td><td class="r">81</td><td class="r">97.5%</td><td class="r">100%</td><td class="r">65.4%</td><td class="r"><strong>100%</strong></td></tr>
+          <tr><td>LIT-PCBA</td><td class="r">15</td><td class="r">100%</td><td class="r">100%</td><td class="r">73.3%</td><td class="r"><strong>100%</strong></td></tr>
+          <tr><td>ChEMBL-Q test</td><td class="r">407</td><td class="r">0%</td><td class="r">0%</td><td class="r">0%</td><td class="r"><strong>0%</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="tbl">
+      <table>
+        <caption>pocket &mdash; benchmark targets with a training pocket within 1&nbsp;&Aring;,
+          median distance in brackets</caption>
+        <thead><tr><th>benchmark</th><th class="r">targets</th><th class="r">PDBbind</th>
+          <th class="r">+ BioLiP</th><th class="r">ChEMBL-Q train</th><th class="r">all three</th></tr></thead>
+        <tbody>
+          <tr><td>DUD-E</td><td class="r">102</td><td class="r">92.2% <span class="dim">[0.00]</span></td><td class="r">100% <span class="dim">[0.00]</span></td><td class="r">52.9% <span class="dim">[0.91]</span></td><td class="r"><strong>100%</strong> <span class="dim">[0.00]</span></td></tr>
+          <tr><td>DEKOIS 2.0</td><td class="r">81</td><td class="r">90.1% <span class="dim">[0.00]</span></td><td class="r">98.8% <span class="dim">[0.00]</span></td><td class="r">59.3% <span class="dim">[0.70]</span></td><td class="r"><strong>98.8%</strong> <span class="dim">[0.00]</span></td></tr>
+          <tr><td>LIT-PCBA</td><td class="r">14</td><td class="r">78.6% <span class="dim">[0.13]</span></td><td class="r">92.9% <span class="dim">[0.00]</span></td><td class="r">42.9% <span class="dim">[1.17]</span></td><td class="r"><strong>92.9%</strong> <span class="dim">[0.00]</span></td></tr>
+          <tr><td>ChEMBL-Q test</td><td class="r">369</td><td class="r">11.1% <span class="dim">[2.23]</span></td><td class="r">14.6% <span class="dim">[2.06]</span></td><td class="r">11.1% <span class="dim">[2.47]</span></td><td class="r"><strong>18.4%</strong> <span class="dim">[2.03]</span></td></tr>
         </tbody>
       </table>
     </div>
 
     <div class="col" style="margin-top: 1.6rem">
       <p>
-        Every DUD-E target has a pocket within 1&nbsp;&Aring; of something in PDBbind or BioLiP,
-        and for more than half the distance is 0.00&nbsp;&Aring; &mdash; the same deposited
-        structure. Every DEKOIS 2.0 and LIT-PCBA target has a sequence homologue there.
-        Scoring a structure-trained model on any of the three measures how well it recalls
-        its training receptors, mixed in with whatever ranking ability it has.
-      </p>
-      <p>
-        ChEMBL-Q's 0% is not a discovery: holding those targets out <em>is</em> the rule, and
-        the next section states it. The pocket column is the informative one, because nothing
-        in the split is decided on geometry. Pocket overlap falls from 100% to 14.6% as a
-        consequence of separating on sequence and structure identity, not because any pocket
-        was filtered.
+        Every DUD-E target has a pocket within 1&nbsp;&Aring; of something in PDBbind or
+        BioLiP, and for more than half the distance is 0.00&nbsp;&Aring; &mdash; the same
+        deposited structure. ChEMBL-Q's 0% in the protein table is not a discovery: holding
+        those targets out is the rule. The pocket row is the informative one, because no
+        split decision is made on geometry, and it falls to 18.4% against everything at once.
       </p>
       <p class="fine">
         LIT-PCBA ships several structures per target; a target counts as overlapping if its
@@ -762,6 +762,35 @@ PDB_ID,Chain,Aligned_File,Ligand_Name,Center_X,Center_Y,Center_Z
         chemical space as crystallised ligands rather than outside it.
       </figcaption>
     </figure>
+
+    <div class="tbl">
+      <table>
+        <caption>ligand &mdash; benchmark actives with a training ligand at Tanimoto 0.7 or above</caption>
+        <thead><tr><th>benchmark</th><th class="r">unique actives</th><th class="r">PDBbind</th>
+          <th class="r">+ BioLiP</th><th class="r">ChEMBL-Q train</th><th class="r">all three</th></tr></thead>
+        <tbody>
+          <tr><td>DUD-E</td><td class="r">20,489</td><td class="r">11.6%</td><td class="r">16.0%</td><td class="r">31.8%</td><td class="r"><strong>39.9%</strong></td></tr>
+          <tr><td>DEKOIS 2.0</td><td class="r">3,004</td><td class="r">11.2%</td><td class="r">15.7%</td><td class="r">34.8%</td><td class="r"><strong>40.5%</strong></td></tr>
+          <tr><td>LIT-PCBA</td><td class="r">7,761</td><td class="r">1.1%</td><td class="r">2.4%</td><td class="r">2.7%</td><td class="r"><strong>4.1%</strong></td></tr>
+          <tr><td>ChEMBL-Q test</td><td class="r">7,207</td><td class="r">3.8%</td><td class="r">7.6%</td><td class="r">19.8%</td><td class="r"><strong>22.8%</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col" style="margin-top:1.4rem">
+      <p>
+        ChEMBL-Q's training split is the largest of the three corpora and the one the other
+        benchmarks overlap most: 14.5% of DUD-E's actives are the same molecule as a ChEMBL-Q
+        training active by InChIKey, not merely similar. DUD-E, DEKOIS 2.0 and ChEMBL-Q all
+        draw on the same literature medicinal chemistry, so this is a property of that shared
+        origin rather than of any one benchmark. LIT-PCBA, whose actives come from HTS, stays
+        under 5% against everything.
+      </p>
+      <p class="fine">
+        Ligand figures were computed on the 409-target split that preceded the last demotion
+        pass; two targets and nine actives have since moved to train.
+      </p>
+    </div>
 
     <h3 style="margin-top:2.6rem">Conditioned on the protein</h3>
     <div class="col">
