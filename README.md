@@ -5,337 +5,328 @@
   <a href="https://j2ho.github.io/chembl-q/">Project Webpage</a>
 </div>
 
-A pipeline for curating ChEMBL into a virtual screening dataset for deep-learning model training/validation.
+A pipeline that curates ChEMBL into a virtual screening benchmark, and a dataset built with it.
 
-We filter ChEMBL activity data, select artificial decoys with reasonable compound/target criteria. Our pipeline also provides a leakage-resistant train/test splitting by receptor similarity. Using PDBbind+BioLip as default training set, easily replacable with user-custom bulk fasta. 
+Most released scoring models are trained on PDBbind or BioLiP and then scored on DUD-E, DEKOIS 2.0 or LIT-PCBA. Those benchmarks were assembled from targets that have crystal structures, which is the criterion that put the same targets in PDBbind and BioLiP, so the models are being scored on receptors they were trained on. Measured with this pipeline: **99–100% of DUD-E, DEKOIS 2.0 and LIT-PCBA targets have a sequence homologue in PDBbind + BioLiP, and 93–100% have a pocket within 1 Å, at a median distance of 0.00 Å.**
 
-Using just our default setting, you can create the 'ChEMBL-LR' benchmark to test DL models trained on PDBbind and/or BioLip2 dataset wihtout having to worry about target leakage! 
+ChEMBL-Q keeps the two apart. 1,006 targets are offered for training and they are the ones those sets already cover; 407 are held back as the benchmark, and none of them has a homologue in PDBbind, in BioLiP, or in the training split itself. Whatever a model was trained on, it can be scored here.
+
+Everything the pipeline measures ships with the data, including the overlap that remains.
 
 ---
 
-## Pipeline Overview
+## The dataset
+
+```
+1,413 targets      single-pocket, structure-backed
+229,279 actives    exact measurement at or below 10 µM
+ 48,547 inactives  experimentally measured, kept apart from decoys
+   2.6M pairs      property-matched, receptor-aware decoys
+
+train  1,006 targets   79,837 actives   median 15 per target
+test     407 targets    8,355 actives   median  2 per target
+```
+
+**What the test split guarantees.** No test target has a PDBbind or BioLiP homologue at 0.4 identity, none was built from a PDB entry those sets hold, and none is within 0.4 identity of a training sequence. Median distance from a test pocket to its closest external pocket is 2.06 Å, against 0.28 Å for train — a consequence of the sequence rules, since no split decision is made on geometry.
+
+**What it does not guarantee.** The split is on targets, not compounds. 14.2% of test actives are also train actives and 29.7% share a Murcko scaffold with one. Run a ligand-only control before attributing performance to structure; the per-target `actives.tsv` files are there to build a compound-disjoint evaluation from if you need one.
+
+---
+
+## Pipeline
 
 | Stage | Command | Output |
 |-------|---------|--------|
-| 1. Compound filtering | `curate` | `{target}/actives.tsv`, `{target}/comps/smiles/*.smi` |
-| 2. Protein filtering | `filter-proteins` | `aligned/*.pdb`, `pocket_info.csv`, `sequences.fasta`, `best_structure.tsv` |
+| 1. Compounds and activities | `curate` | `{target}/actives.tsv`, `inactives.tsv`, `measured.tsv` |
+| 2. Protein structures | `filter-proteins` | `aligned/*.pdb`, `pocket_info.csv`, `sequences.fasta`, `best_structure.tsv` |
 | 3. Active clustering | `cluster-actives` | `{target}/actives_clustered.tsv` |
 | 4. Compound pool | `build-pool` | `compound_pool.pkl` |
-| 5. Receptor similarity | `receptor-sim` | `pairwise_seqid.tsv`, `pairwise_pocket_rmsd.tsv` |
+| 5. Receptor similarity | `receptor-sim` | `pairwise_seqid.tsv`, `pairwise_pocket_hungarian.tsv` |
 | 6. Decoy selection | `select-decoys` | `{target}/decoys.tsv` |
-| 7. Train/test split | `split` | `train.txt`, `test.txt` |
+| 7. External pocket overlap | `external-pockets`, `pocket-leakage` | `external_pocket_best.tsv`, `external_pocket_hits.tsv` |
+| 8. Train/test split | `split` | `train.txt`, `test.txt`, `chembl_targets.tsv` |
 
-All outputs go under a single data directory (e.g. `curated_data_filtered/`).
+Stage 7 writes a table stage 8 reads, so it runs first. Each stage reads the previous stage's output, so a run can be resumed or a single stage re-run with different settings.
 
 ---
 
 ## Installation
 
-### Conda environment (recommended)
-
-conda is the recommended approach - RDKit and nurikit are C++ extension packages that conda resolves cleanly.
-
 ```bash
-conda create -n chemblq python=3.10
-conda activate chemblq
-
-# RDKit via conda-forge (simpler than pip for RDKit)
-conda install -c conda-forge rdkit
-
-# Remaining Python dependencies
-pip install -e .          # installs click, numpy, pandas, requests, tqdm, nurikit
+conda create -n chembl-q python=3.11
+conda activate chembl-q
+git clone https://github.com/j2ho/chembl-q
+cd chembl-q
+pip install -e .          # rdkit, numpy, pandas, scipy, requests, tqdm, click, nurikit
+pip install -e ".[dev]"   # adds pytest
 ```
 
-> **`nuri` vs `nurikit`**: the Python import is `import nuri` but the package name on PyPI is `nurikit`. The `pip install -e .` above handles this via the dependency in `pyproject.toml`.
+The Python import is `nuri`; the PyPI package is `nurikit`. `pyproject.toml` handles that.
 
-### External binaries
-
-These are not pip/conda packages and must be installed separately:
-
-| Tool | Required for | Install |
-|------|-------------|---------|
-| **MMseqs2** | Stages 5, 7 (sequence search/clustering) | [github.com/soedinglab/MMseqs2](https://github.com/soedinglab/MMseqs2) - must be in `PATH` |
-| `wget` | Stage 2 (AlphaFold download) | usually pre-installed |
-| `pdb_get` | Stage 2 (optional) | local PDB mirror; falls back to RCSB web download |
-
-> **Note:** Structure alignment (Stages 2, 5) uses `nurikit` (Python TMAlign bindings), which is installed automatically via `pip install -e .`. No separate TMalign binary is needed.
-
-```bash
-# Verify MMseqs2 is in PATH
-mmseqs --help
-```
+**MMseqs2** must be on `PATH` for stages 5 and 8: [github.com/soedinglab/MMseqs2](https://github.com/soedinglab/MMseqs2). Structure alignment uses `nurikit`'s TM-align bindings, so no separate TMalign binary is needed. `wget` is used for AlphaFold downloads.
 
 ---
 
-## Quick Start
+## Quick start
 
 ```bash
-DATA=curated_data_filtered
+bash run_full.sh          # the whole pipeline at the settings this dataset was built with
+```
 
-# Stage 1: curate compounds from ChEMBL (bundled config.json applies opt-in filters)
-chembl-curator curate --download --config config.json --output $DATA
+Or a stage at a time. `config.json` is the scientific contract — without it the defaults are much looser and the result will not match the shipped dataset.
 
-# Stage 2: validate protein structures and binding sites
-chembl-curator filter-proteins --curated-dir $DATA --n-processes 8
+```bash
+DATA=curated_v5
 
-# Stage 3: cluster actives per target (Butina, Tanimoto ≥ 0.7)
-chembl-curator cluster-actives --data-dir $DATA --workers 8
-
-# Stage 4: build global compound pool
+chembl-curator curate --database chembl_36.db --config config.json --output $DATA
+chembl-curator filter-proteins --curated-dir $DATA --n-processes 32 --cache-dir pdb_cache/
+chembl-curator cluster-actives --data-dir $DATA --dist-thresh 0.3 --workers 32
 chembl-curator build-pool --data-dir $DATA
-
-# Stage 5: compute pairwise receptor similarity
-chembl-curator receptor-sim --data-dir $DATA --mode both --workers 8
-
-# Stage 6: select property-matched, receptor-aware decoys
-chembl-curator select-decoys --data-dir $DATA --max-decoys 30
-
-# Stage 7: train/test split by sequence identity clustering
-chembl-curator split --data-dir $DATA --valid-frac 0.1
+chembl-curator receptor-sim --data-dir $DATA --mode seqid --seqid-threads 32
+chembl-curator receptor-sim --data-dir $DATA --mode pocket \
+    --pocket-method hungarian --pocket-radius 8.0 --workers 32 \
+    --output $DATA/pairwise_pocket_hungarian.tsv
+chembl-curator select-decoys --data-dir $DATA --max-decoys 30 \
+    --pocket-rmsd-thresh 2.0 --min-matched-residues 15 \
+    --pocket-rmsd-tsv $DATA/pairwise_pocket_hungarian.tsv
+chembl-curator pocket-leakage --data-dir $DATA --cache external_pockets.npz
+chembl-curator split --data-dir $DATA --seqid 0.4 --valid-frac 1.0 --threads 32
 ```
+
+Rough timings at 32 cores: stage 1 ~30 min, stage 2 ~3 h with a warm structure cache, stages 3–5 ~10 min, stage 6 ~45 min, stage 7 ~75 min, stage 8 ~2 min.
 
 ---
 
-## Stage Reference
+## Stage reference
 
 ### Stage 1: `curate`
 
-Extracts and filters ligand-target pairs from ChEMBL.
+Pulls actives, measured inactives and the full tested list out of ChEMBL.
+
+Labelling is by relation, not by threshold alone. An exact measurement (`=`, `<=`) at or below 10 µM is an active. A censored `>` record is non-binding evidence and its strength is the concentration tested, so `>` at or above 100 µM is an inactive. When a compound has both, the conflict is settled by potency rather than by counting records: a compound measured at 0.34 nM across 75 assays stays active despite one depositor calling it inactive, and is tagged contested.
+
+Requiring `pchembl_value >= 5` means only `=` records survive in practice — ChEMBL does not assign a pChEMBL to censored rows.
 
 ```bash
-chembl-curator curate --download --output curated_data_filtered
-chembl-curator curate --database /path/to/chembl.db --config config.json --output curated_data_filtered
-chembl-curator curate --create-config config.json   # generate example config
+chembl-curator curate --database chembl_36.db --config config.json --output $DATA
+chembl-curator curate --create-config myconfig.json   # write an example config
 ```
 
-**Always on (built-in defaults):**
-- Target type: SINGLE PROTEIN
-- Activity types: Ki, Kd, IC50, EC50
-- Relations: `=`, `<=`
-- Units: nM, uM (< 10,000 nM / < 10 µM)
-- Heavy atoms: 5-80, valid SMILES required
-- Excludes rows with `data_validity_comment` or `potential_duplicate`
+Every field of `config.json` is applied; there are no silently-on defaults to remember. The shipped file:
 
-**Opt-in (only applied when `-c config.json` is passed):**
-- `min_pchembl_value: 5.0`
-- `min_confidence_score: 6`
-- `assay_types: ["B"]` (binding only)
-- `bao_formats: ["BAO_0000357"]`
-- `require_standard_flag: true` (curated data only)
-
-The bundled `config.json` at repo root enables all of the opt-in filters — pass it via `--config config.json` to reproduce the shipped dataset.
-
-**Configuration (JSON):**
 ```json
 {
-  "activity_thresholds": {"nM": 10000.0, "uM": 10.0},
+  "target_types": ["SINGLE PROTEIN"],
   "activity_types": ["Kd", "Ki", "IC50", "EC50"],
   "relations": ["=", "<="],
   "units": ["nM", "uM"],
-  "min_pchembl_value": 5.0,
+  "activity_thresholds": {"nM": 10000.0, "uM": 10.0},
+  "min_pchembl_value": 5,
+  "min_heavy_atoms": 5,
+  "max_heavy_atoms": 80,
+  "require_standard_flag": false,
+  "exclude_invalid_data": true,
+  "exclude_duplicates": true,
   "min_confidence_score": 6,
-  "assay_types": ["B"]
+  "assay_types": ["B"],
+  "bao_formats": ["BAO_0000357"],
+  "extract_negatives": true,
+  "active_max_nm": 10000.0,
+  "inactive_min_nm": 100000.0,
+  "conflict_decisive_nm": 1000.0
 }
 ```
 
----
+Actives and negatives share every assay-quality filter. Only `standard_type` differs: an inactive compound has no IC50 to report, so its result is filed under "% Control" or "Inhibition" instead, and restricting negatives to potency types would drop about 90% of depositor inactive calls.
 
 ### Stage 2: `filter-proteins`
 
-Fetches PDB structures, downloads AlphaFold models, aligns structures, and keeps only targets with a single binding site.
+Fetches structures, aligns them, and keeps targets with a single binding pocket.
 
 ```bash
-chembl-curator filter-proteins --curated-dir curated_data_filtered --n-processes 8
-```
-
-Steps: fetch UniProt PDB list -> download PDB/AlphaFold -> detect ligand-bound structures -> align to AlphaFold (TMalign) -> cluster pockets -> filter single-site targets.
-
-Also writes `sequences.fasta` (canonical UniProt sequences) and `best_structure.tsv` (best-resolution ligand-bound structure per target) needed by later stages.
-
----
-
-### Stage 3: `cluster-actives`
-
-Butina clustering of actives per target. Picks the highest-pChEMBL representative per cluster.
-
-```bash
-chembl-curator cluster-actives --data-dir curated_data_filtered --dist-thresh 0.3 --workers 8
+chembl-curator filter-proteins --curated-dir $DATA --n-processes 32 --cache-dir pdb_cache/
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--dist-thresh` | 0.3 | Tanimoto distance threshold (0.3 -> similarity ≥ 0.7) |
-| `--workers` | 1 | Parallel worker processes |
+| `--cache-dir` | `pdb_cache/` | Shared structure cache, reused across runs |
+| `--use-local-mirror` | off | Try a site-local `pdb_get` before the network |
+| `--max-chain-residues` | 1500 | Skip chains longer than this |
 
----
+RCSB no longer ships PDB format for new entries — 74% of 9-series entries are mmCIF only — so downloads fall back to mmCIF and convert with nuri. The cache matters: this stage deletes the directory of every target it rejects, so without one each run re-downloads several thousand structures it then discards.
+
+A pocket-defining ligand needs at least 5 heavy atoms and a burial of 20 protein atoms within 8 Å, and must not be a modified residue. Two ligands are in the same pocket when their closest heavy atoms are within 5 Å; centroid distance is size-contaminated and splits elongated cofactors from their own sites. The representative ligand is the one contacting the most residues, ties broken by size.
+
+**This stage deletes rejected targets' directories. Never point it at a finished dataset.**
+
+### Stage 3: `cluster-actives`
+
+Butina clustering per target, so a scaffold series counts once. `--dist-thresh 0.3` is Tanimoto similarity ≥ 0.7.
 
 ### Stage 4: `build-pool`
 
-Builds a global compound pool from all clustered actives. Deduplicates by ChEMBL ID, computes molecular properties and Morgan fingerprints.
-
-```bash
-chembl-curator build-pool --data-dir curated_data_filtered
-```
-
-Pool contains: MW, cLogP, TPSA, HBD, HBA, aromatic rings, 2048-bit Morgan FP (radius 2), target membership set.
-
----
+Global compound pool: MW, cLogP, TPSA, HBD, HBA, aromatic rings, 2048-bit Morgan fingerprint at radius 2, and the set of targets each compound is active against.
 
 ### Stage 5: `receptor-sim`
 
-Computes pairwise receptor similarity via two independent methods.
-
 ```bash
-# Both (recommended)
-chembl-curator receptor-sim --data-dir curated_data_filtered --mode both --workers 8
-
-# Sequence identity only (faster, no nuri required)
-chembl-curator receptor-sim --data-dir curated_data_filtered --mode seqid
+chembl-curator receptor-sim --data-dir $DATA --mode seqid --seqid-threads 32
+chembl-curator receptor-sim --data-dir $DATA --mode pocket \
+    --pocket-method hungarian --pocket-radius 8.0 --workers 32 \
+    --output $DATA/pairwise_pocket_hungarian.tsv
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--mode` | both | `seqid`, `pocket`, or `both` |
-| `--seqid-threads` | 4 | MMseqs2 thread count |
-| `--workers` | 4 | Processes for pocket RMSD |
-| `--pocket-radius` | 10.0 | Pocket radius in Å |
+| `--pocket-method` | tmalign | `hungarian` is what the dataset uses |
+| `--pocket-radius` | 10.0 | 8.0 with `hungarian` |
 
-**Sequence identity:** MMseqs2 all-vs-all -> `pairwise_seqid.tsv` (query, target, seqid 0-1)
-
-**Pocket RMSD:** TM-align full chain -> filter to pocket residues within radius -> RMSD on ≥3 matched pairs -> `pairwise_pocket_rmsd.tsv`
-
----
+A pocket is every residue with a heavy atom within the radius of a ligand heavy atom, reduced to its Cα. `hungarian` pairs residues order-free by assignment on a cost combining a local distance fingerprint with a residue-class penalty, then refines the pairing and the superposition against each other. TM-align's pairing follows sequence order, so two pockets built from the same residues in a different arrangement cannot match: it produced a usable RMSD for 19% of pairs against hungarian's 100%.
 
 ### Stage 6: `select-decoys`
 
-Selects property-matched, chemically dissimilar decoys per active. Excludes compounds active against receptors similar to the query target.
-
 ```bash
-chembl-curator select-decoys --data-dir curated_data_filtered --max-decoys 30
+chembl-curator select-decoys --data-dir $DATA --max-decoys 30 \
+    --pocket-rmsd-thresh 2.0 --min-matched-residues 15 \
+    --pocket-rmsd-tsv $DATA/pairwise_pocket_hungarian.tsv
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--max-decoys` | 30 | Decoys per active |
-| `--seqid-thresh` | 0.6 | Seqid threshold for receptor exclusion |
-| `--pocket-rmsd-thresh` | 3.0 | Pocket RMSD threshold (Å) for receptor exclusion |
-| `--exclusion-mode` | or | `or` = exclude if seqid OR pocket matches |
-| `--tanimoto-thresh` | 0.3 | Max Tanimoto between active and decoy |
+| `--seqid-thresh` | 0.6 | Sequence identity for receptor exclusion |
+| `--pocket-rmsd-thresh` | 2.0 | Pocket RMSD for receptor exclusion |
+| `--min-matched-residues` | 15 | A close fit over a handful of residues is not evidence |
+| `--tanimoto-thresh` | 0.3 | Maximum similarity between an active and its decoy |
 
-Property matching windows: ±50 Da MW, ±2 cLogP, ±50 Å² TPSA, ±2 HBD, ±2 HBA, ±1 aromatic ring.
+A compound measured against this target is never a decoy for it, whatever the outcome — that is what `measured.tsv` is for. Neither is an active of a target with a similar receptor. Pocket similarity does most of that work: 4,540 pairs qualify on pocket against 240 on sequence.
 
----
+Property windows: ±50 Da MW, ±2 cLogP, ±50 Å² TPSA, ±2 HBD, ±2 HBA, ±1 aromatic ring.
 
-### Stage 7: `split`
+### Stage 7: `external-pockets`, `pocket-leakage`
 
-Train/test split by sequence-identity clustering (MMseqs2). Greedy assignment balances per-source ratios. Per-entry sampling weight = `1 / log2(cluster_size + 1)`.
-
-A bundled PDBbind+BioLip FASTA (`chembl_curator/assets/external_targets.fasta`) is included by default.
+Superposes every ChEMBL pocket against all 38,825 pockets extracted from PDBbind and BioLiP, using the same pocket definition as stage 5.
 
 ```bash
-# Default: includes bundled PDBbind+BioLip sequences
-chembl-curator split --data-dir curated_data_filtered --valid-frac 0.1
+# build the cache once, needs the raw structure sets on disk
+chembl-curator external-pockets --biolip-dir /path/BioLiP_updated_set \
+    --pdbbind-dir /path/v2020-refined --pdbbind-dir /path/v2020-others \
+    --output external_pockets.npz --workers 32
 
-# ChEMBL-only split (no external sequences)
-chembl-curator split --data-dir curated_data_filtered --no-external
-
-# Use your own external FASTA
-chembl-curator split --data-dir curated_data_filtered \
-    --external-fasta /path/to/your.fasta
+# or use the shipped cache and skip straight to the comparison
+chembl-curator pocket-leakage --data-dir $DATA --cache external_pockets.npz --workers 32
 ```
 
-**External FASTA ID format:** IDs must be dot-prefixed as `>{source}.{entry_id}`, where `source` is any label (e.g. `pdbbind`, `biolip`, `myscreendb`) and `entry_id` is any identifier without spaces. For example:
+`external_pockets.npz` is in the repository, so `pocket-leakage` runs without PDBbind or BioLiP on disk.
+
+**The result is reported, not filtered.** Cutting the test set on pocket RMSD removes the data-rich targets: a 1.0 Å cut takes 13% of the test targets but 22% of the actives, because a fold that has been drugged hard is also one those sets hold many structures of. 165 test targets sit within 2 Å of an external pocket and not one of them is the same protein — 104 produce no sequence alignment with the matched entry at all. Stage 8 carries the number into `chembl_targets.tsv` so a benchmark can be scored overall and on a pocket-novel subset.
+
+### Stage 8: `split`
+
+```bash
+chembl-curator split --data-dir $DATA --seqid 0.4 --valid-frac 1.0 --threads 32
+chembl-curator split --data-dir $DATA --no-external          # ChEMBL-only split
+chembl-curator split --data-dir $DATA --external-fasta my.fa # your own reference set
+```
+
+A target is kept out of the test set if any of three rules fires. All three are sequence or identifier rules; pocket geometry is never used to decide a split.
+
+1. **Sequence homology**, 978 targets. An external entry aligns at 0.4 identity or better over at least 80% of that external sequence. Coverage is measured on the external side because what gets crystallised is a domain while a ChEMBL target is a whole UniProt entry; measuring over the query let 120 targets into the test set with their own PDB entry sitting in BioLiP.
+2. **Shared structure**, 680 targets. The target was built from a PDB entry those sets hold. Alignment cannot be relied on here: MMseqs2 finds only a 31-residue alignment between IGF2R's 2,491 residues and its 182-residue PDBbind construct.
+3. **Proximity to train**, 3 targets. Iterated to a fixed point.
+
+`--valid-frac 1.0` sends every eligible cluster to test: the test set is defined by what is safe to hold out, not by a target ratio.
+
+**External FASTA IDs** are dot-prefixed as `>{source}.{entry_id}`:
+
 ```
 >pdbbind.1a4k
-MPPYTVVY...
 >biolip.10gs_VWW_A_1
-PYTVVYFP...
 >myscreendb.custom_entry_42
-MKWVTFIS...
-```
-
-**Output: `train.txt` / `test.txt`** (tab-separated, with header):
-```
-source	entry_id	compound	weight
-chembl	A0A0H2UPP7	CHEMBL405346	0.17
-chembl	A0A0H2UPP7	CHEMBL407216	0.17
-biolip	10gs_VWW_A_1	-	0.19
-pdbbind	1a4k	-	0.26
-```
-
-**Output: `chembl_targets.tsv`** (tab-separated, with header):
-```
-uniprot	split	n_actives	n_decoys
-A0A0H2UPP7	train	2	60
-Q9NR56	test	9	270
 ```
 
 ---
 
-## Output Structure
+## Output
 
 ```
-curated_data_filtered/
-├── sequences.fasta             # Canonical sequences, all passed targets
-├── best_structure.tsv          # uniprot -> best PDB chain + resolution
-├── compound_pool.pkl           # Global compound pool (pickle)
-├── pairwise_seqid.tsv          # All-vs-all sequence identity
-├── pairwise_pocket_rmsd.tsv    # All-vs-all pocket RMSD
-├── passed_targets.txt          # UniProt IDs that passed protein filtering
-├── train.txt                   # Train split entries with weights
-├── test.txt                    # Test split entries with weights
-├── chembl_targets.tsv          # Per-target summary (split, n_actives, n_decoys)
+curated_v5/
+├── sequences.fasta                # canonical sequences, all passed targets
+├── best_structure.tsv             # uniprot -> best ligand-bound chain + resolution
+├── passed_targets.txt
+├── compound_pool.pkl
+├── pairwise_seqid.tsv             # MMseqs2 all-vs-all
+├── pairwise_pocket_hungarian.tsv  # 989,121 internal pocket pairs
+├── external_pocket_best.tsv       # closest PDBbind/BioLiP pocket per target
+├── external_pocket_hits_2A.tsv    # every pair under 2 Å
+├── train.txt / test.txt           # one line per active, with a sampling weight
+├── chembl_targets.tsv             # split, counts, and the external pocket match
 │
-└── {UniProt}/                  # Per-target directory
-    ├── actives.tsv             # chembl_id, pchembl, smiles
-    ├── actives_clustered.tsv   # + cluster_size column
-    ├── decoys.tsv              # active_chembl_id -> decoy_ids (;-sep)
-    ├── comps/smiles/*.smi      # Raw SMILES files from Stage 1
-    ├── pdb/                    # Downloaded PDB + AlphaFold structures
-    ├── aligned/                # Structures aligned to AlphaFold model
-    ├── pdbid.list              # PDB metadata (method, resolution, chains)
-    ├── pocket_info.csv         # Ligand pocket coordinates
-    └── sequence.fasta          # Per-target canonical sequence
+└── {UniProt}/
+    ├── actives.tsv                # chembl_id, pchembl, smiles
+    ├── actives_clustered.tsv      # + cluster_size
+    ├── inactives.tsv              # chembl_id, evidence, smiles — measured, not generated
+    ├── measured.tsv               # every compound tested against this target
+    ├── decoys.tsv                 # active_chembl_id -> decoy_ids (;-separated)
+    ├── pocket_info.csv            # structure, chain, ligand, pocket centre
+    ├── aligned/                   # superposed chain PDBs
+    ├── pdb/                       # downloaded structures
+    ├── pdbid.list
+    └── sequence.fasta
+```
+
+`chembl_targets.tsv` gains two columns when stage 7 has run, and is omitted entirely when it has not — a 0.0 default would read as "identical to an external pocket":
+
+```
+uniprot  split  n_actives  n_decoys  ext_pocket_rmsd  ext_pocket_entry
+Q9Y5N1   test         409     12263            2.534  biolip.4qkx_35V_A_1
 ```
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 ChEMBL-Q/
 ├── chembl_curator/
-│   ├── __init__.py
 │   ├── cli.py                  # CLI entry points
 │   ├── config.py               # CurationConfig
-│   ├── curator.py              # Stage 1
-│   ├── protein_filter.py       # Stage 2
-│   ├── active_clusterer.py     # Stage 3
-│   ├── compound_pool.py        # Stage 4
-│   ├── receptor_similarity.py  # Stage 5
-│   ├── decoy_selector.py       # Stage 6
-│   ├── splitter.py             # Stage 7
-│   ├── downloader.py
-│   ├── filters.py
+│   ├── curator.py              # stage 1
+│   ├── labeler.py              # active / inactive / contested, no DB access
+│   ├── protein_filter.py       # stage 2
+│   ├── active_clusterer.py     # stage 3
+│   ├── compound_pool.py        # stage 4
+│   ├── receptor_similarity.py  # stage 5
+│   ├── pocket_align.py         # order-free pocket superposition
+│   ├── decoy_selector.py       # stage 6
+│   ├── external_pockets.py     # stage 7
+│   ├── splitter.py             # stage 8
 │   └── assets/
 │       ├── excluded_ligands.txt
 │       └── external_targets.fasta
-├── docs/
-│   └── index.html              # Interactive pipeline overview
-├── pyproject.toml
-└── README.md
+├── tests/                      # pytest, no network needed except the download tests
+├── config.json
+├── external_pockets.npz        # 38,825 PDBbind/BioLiP pockets, 17 MB
+├── run_full.sh
+└── docs/index.html
+```
+
+```bash
+pytest tests/ -q
 ```
 
 ---
 
-## External Tools & Databases
+## Built on
 
-- [ChEMBL](https://www.ebi.ac.uk/chembl/) - bioactivity database
-- [AlphaFold DB](https://alphafold.ebi.ac.uk/) - predicted protein structures
-- [RCSB PDB](https://www.rcsb.org/) - experimental protein structures
-- [MMseqs2](https://github.com/soedinglab/MMseqs2) - fast sequence search/clustering
-- [nurikit](https://github.com/seoklab/nurikit) - Python TMAlign bindings (used for structure alignment)
+- [ChEMBL](https://www.ebi.ac.uk/chembl/) — bioactivity data
+- [RCSB PDB](https://www.rcsb.org/) and [AlphaFold DB](https://alphafold.ebi.ac.uk/) — structures
+- [MMseqs2](https://github.com/soedinglab/MMseqs2) — sequence search and clustering
+- [nurikit](https://github.com/seoklab/nurikit) — molecule I/O and TM-align bindings
+- [RDKit](https://www.rdkit.org/) — cheminformatics
+- PDBbind v2020 and BioLiP — the reference sets held out against
 
 ## License
 
-This project is provided as-is for research purposes.
+Provided as-is for research purposes.

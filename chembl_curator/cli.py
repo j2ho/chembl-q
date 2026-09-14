@@ -111,9 +111,9 @@ def curate(database, output, download, config, create_config, activity_types, re
 @cli.command(name='filter-proteins')
 @click.option('--curated-dir', '-d', required=True, type=click.Path(exists=True),
               help='Directory containing curated targets (uniprot IDs)')
-@click.option('--n-processes', '-n', default=1, type=int,
-              help='Number of parallel processes (default: 1)')
-@click.option('--max-chain-residues', default=1500, type=int,
+@click.option('--n-processes', '-n', default=1, type=int, show_default=True,
+              help='Number of parallel processes')
+@click.option('--max-chain-residues', default=1500, type=int, show_default=True,
               help='Skip PDB structures whose target chain exceeds this many residues (0 = no limit)')
 @click.option('--cache-dir', type=click.Path(),
               help='Shared structure cache reused across runs '
@@ -280,7 +280,7 @@ def build_pool(data_dir, output, log_level):
               help='Worker processes for pocket RMSD computation')
 @click.option('--pocket-radius', type=float, default=10.0, show_default=True,
               help='Pocket radius in Å for pocket RMSD')
-@click.option('--pocket-method', default='tmalign',
+@click.option('--pocket-method', default='tmalign', show_default=True,
               type=click.Choice(['tmalign', 'hungarian']),
               help='Pocket superposition: tmalign (sequence-ordered global '
                    'alignment) or hungarian (order-free matching). Pair with '
