@@ -335,6 +335,11 @@ def receptor_sim(data_dir, mode, seqid_threads, workers, pocket_radius,
               help='"or" = exclude if seqid OR pocket matches; "and" = both must match')
 @click.option('--tanimoto-thresh', type=float, default=0.3, show_default=True,
               help='Max Tanimoto similarity between active and decoy')
+@click.option('--max-selection-count', type=int, default=None,
+              help='Max times one compound may be used as a decoy. Left '
+                   'unset it is derived as ceil(total_actives * max_decoys / '
+                   'pool_size) + 1, which makes the cap move with the data; '
+                   'set it to pin the released value. The run logs both.')
 @click.option('--seed', type=int, default=42, show_default=True,
               help='Random seed')
 @click.option('--log-level', default='INFO',
@@ -342,7 +347,7 @@ def receptor_sim(data_dir, mode, seqid_threads, workers, pocket_radius,
 @with_logging
 def select_decoys(data_dir, max_decoys, seqid_thresh, pocket_rmsd_thresh,
                   pocket_rmsd_tsv, min_matched_residues, exclusion_mode,
-                  tanimoto_thresh, seed, log_level):
+                  tanimoto_thresh, max_selection_count, seed, log_level):
     """Stage 6: Receptor-aware decoy selection.
 
     For each active, selects up to max_decoys property-matched,
@@ -358,6 +363,7 @@ def select_decoys(data_dir, max_decoys, seqid_thresh, pocket_rmsd_thresh,
         min_matched_residues=min_matched_residues,
         exclusion_mode=exclusion_mode,
         tanimoto_thresh=tanimoto_thresh,
+        max_selection_count=max_selection_count,
         seed=seed,
         log_level=log_level,
     )

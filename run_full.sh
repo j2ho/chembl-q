@@ -54,6 +54,13 @@ if command -v conda >/dev/null; then
     conda activate "$CONDA_ENV"
 fi
 
+# Python salts string hashing per process, so iterating any set of compound or
+# target IDs comes out in a different order every run. Stage 6 draws decoys
+# against a running usage cap, which makes that order change which decoys get
+# picked; seeding random covers the shuffle but not the iteration. The code
+# sorts where order decides an output, and this pins the rest.
+export PYTHONHASHSEED=0
+
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 log "ChEMBL-Q build: ${N_CPUS} CPUs, data dir ${DATA_DIR}"
 
@@ -122,6 +129,11 @@ chembl-curator receptor-sim \
 # A compound measured against this target is never a decoy for it, and neither
 # is an active of a target with a similar receptor. --min-matched-residues 15
 # rejects a close fit that rests on a handful of residues.
+#
+# --max-selection-count 41 is the released value, pinned rather than derived.
+# It was tight: 88,192 actives x 30 slots is 94% of what 67,795 compounds can
+# supply at that cap, and 84.9% of the pool ended up sitting exactly on it.
+# Leave the flag off to let it move with the data; the run logs both numbers.
 
 log "Stage 6: selecting decoys"
 chembl-curator select-decoys \
@@ -133,6 +145,7 @@ chembl-curator select-decoys \
     --pocket-rmsd-tsv "$DATA_DIR/pairwise_pocket_hungarian.tsv" \
     --exclusion-mode or \
     --tanimoto-thresh 0.3 \
+    --max-selection-count 41 \
     --seed 42 \
     --log-level INFO
 

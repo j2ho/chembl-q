@@ -336,23 +336,45 @@ class DecoySelector:
         similar_targets = self._build_combined_similar(seqid_sim, pocket_sim)
         measured = self._load_measured(data_dir, passed_targets)
 
-        # Auto-compute max_selection_count to distribute decoys evenly
+        # How many times one compound may serve as a decoy. Derived from
+        # demand over pool size when not given, but the derived value is
+        # always computed so an explicit setting can be checked against it:
+        # total demand here runs at 94% of total capacity, so a cap set even
+        # slightly low starves the pool and underfills silently.
         total_actives = sum(len(target_actives.get(t, set())) for t in passed_targets)
+        derived = math.ceil(total_actives * self.max_decoys / len(pool)) + 1
         max_sel = (
             self.max_selection_count
             if self.max_selection_count is not None
-            else math.ceil(total_actives * self.max_decoys / len(pool)) + 1
+            else derived
         )
+        demand = total_actives * self.max_decoys
         self.logger.info(
             f"total_actives={total_actives}, max_decoys={self.max_decoys}, "
-            f"max_sel_count={max_sel}, exclusion_mode={self.exclusion_mode}"
+            f"max_sel_count={max_sel} "
+            f"({'explicit' if self.max_selection_count is not None else 'derived'}"
+            f", derived={derived}), "
+            f"demand={demand} over capacity={max_sel * len(pool)} "
+            f"({demand / (max_sel * len(pool)):.1%}), "
+            f"exclusion_mode={self.exclusion_mode}"
         )
+        if self.max_selection_count is not None and max_sel < derived:
+            self.logger.warning(
+                f"max_selection_count={max_sel} is below the derived {derived}; "
+                f"the pool cannot supply {demand} decoy slots and actives will "
+                f"be underfilled"
+            )
 
         sel_count: Dict[str, int] = defaultdict(int)
         stats: Dict[str, int] = defaultdict(int)
 
         for uniprot in passed_targets:
-            actives = list(target_actives.get(uniprot, set()))
+            # sorted, not list(): target_actives holds sets of strings, and
+            # str hashing is salted per process, so list() gives a different
+            # order on every run. Order decides who draws from the pool first
+            # while sel_count is still low, so seeding random was not enough
+            # to make a run reproducible.
+            actives = sorted(target_actives.get(uniprot, set()))
             if not actives:
                 continue
 
