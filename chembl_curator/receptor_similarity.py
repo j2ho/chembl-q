@@ -186,37 +186,63 @@ def parse_protein_residues(pdb_path: Path):
     ]
 
 
-def parse_ligand_atoms(pdb_path: Path, ligand_name: Optional[str] = None):
+def parse_ligand_atoms(pdb_path: Path, ligand_name: Optional[str] = None,
+                       ligand_residue: Optional[str] = None):
     """Ligand heavy atoms.
 
     With a ligand_name, takes HETATM records of that residue from a combined
     file. Without one, takes every heavy atom in the file, which is the case
     for PDBbind and BioLiP where the ligand ships as its own file and may be
     written as ATOM rather than HETATM.
+
+    ligand_residue is "chain:resseq" and names one physical copy. Without it
+    every copy of the code in the file is pooled, and align_pdb writes every
+    HETATM regardless of chain: Q12791 pooled 20 copies of the membrane lipid
+    POV into a 516-atom "ligand" spanning 71.6 A, which then defined a
+    91-residue pocket across a whole tetramer. 45% of curated_v5 targets were
+    scored on a ligand with more than one copy, the widest an ADP spanning
+    234 A. Callers that have the residue must pass it.
     """
-    atoms = [
-        xyz
-        for record, resname, _, _, _, xyz in iter_heavy_atoms(pdb_path)
-        if ligand_name is None or (record == "HETATM" and resname == ligand_name)
-    ]
+    if ligand_residue:
+        want_chain, _, want_resseq = ligand_residue.partition(":")
+        want_resseq = want_resseq.strip()
+    else:
+        want_chain = want_resseq = None
+
+    atoms = []
+    for record, resname, chain, resseq, _atom, xyz in iter_heavy_atoms(pdb_path):
+        if ligand_name is not None:
+            if record != "HETATM" or resname != ligand_name:
+                continue
+            if want_chain is not None and (
+                    chain != want_chain or resseq.strip() != want_resseq):
+                continue
+        atoms.append(xyz)
     return np.asarray(atoms, dtype=float)
 
 
-def parse_structure_residues(pdb_path: Path, ligand_name: str):
+def parse_structure_residues(pdb_path: Path, ligand_name: str,
+                             ligand_residue: Optional[str] = None):
     """Read one aligned PDB into (protein residues, ligand heavy atoms)."""
     return (parse_protein_residues(pdb_path),
-            parse_ligand_atoms(pdb_path, ligand_name))
+            parse_ligand_atoms(pdb_path, ligand_name, ligand_residue))
 
 
-def chembl_pocket(pdb_path: Path, ligand_name: str, pocket_radius: float = 8.0):
+def chembl_pocket(pdb_path: Path, ligand_name: str,
+                  pocket_radius: float = 8.0,
+                  ligand_residue: Optional[str] = None):
     """The pocket of one ChEMBL target, as stage 5 defines it.
 
     Stage 7 compares these against PDBbind and BioLiP pockets, so the
     definition lives here rather than being spelled out again there. A
     leakage check run against a differently-built pocket would be measuring
     the difference between the two definitions as much as anything else.
+
+    ligand_residue comes from pocket_info.csv and names the copy the pocket
+    was chosen from; see parse_ligand_atoms for what pooling copies did.
     """
-    residues, ligand_xyz = parse_structure_residues(pdb_path, ligand_name)
+    residues, ligand_xyz = parse_structure_residues(
+        pdb_path, ligand_name, ligand_residue)
     return pocket_from_structure(residues, ligand_xyz, pocket_radius)
 
 
@@ -224,6 +250,8 @@ def chembl_pocket(pdb_path: Path, ligand_name: str, pocket_radius: float = 8.0):
 
 class ReceptorSimilarity:
     """Compute pairwise receptor similarity (sequence identity and/or pocket RMSD)."""
+
+    _warned_no_residue = False
 
     def __init__(self, log_level: str = "INFO"):
         self.logger = logging.getLogger(__name__)
@@ -391,11 +419,13 @@ class ReceptorSimilarity:
                 continue
 
             if method == "hungarian":
-                lig_name = self._get_lig_name(data_dir / uniprot, pdbid_chain)
+                lig_name, lig_res = self._get_lig_id(
+                    data_dir / uniprot, pdbid_chain)
                 if lig_name is None:
                     skipped.append((uniprot, 'no_lig_name'))
                     continue
-                pocket = chembl_pocket(pdb_path, lig_name, pocket_radius)
+                pocket = chembl_pocket(pdb_path, lig_name, pocket_radius,
+                                       ligand_residue=lig_res)
                 if pocket is None:
                     skipped.append((uniprot, 'empty_pocket'))
                     continue
@@ -517,19 +547,34 @@ class ReceptorSimilarity:
                 ca.append(a.get_pos(0))
         return np.array(ca) if ca else np.empty((0, 3))
 
-    def _get_lig_name(
+    def _get_lig_id(
         self, target_dir: Path, pdbid_chain: str
-    ) -> Optional[str]:
-        """Ligand residue code for the given aligned structure, from pocket_info.csv."""
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """(ligand code, "chain:resseq") for one aligned structure.
+
+        Both together, never the code alone: the code does not identify a
+        molecule in a file that holds several copies of it, and returning them
+        separately is how the pocket builder came to pool all of them.
+
+        A pocket_info.csv written before Ligand_Residue existed yields None for
+        the residue, which restores the pooling. Warn rather than pretend.
+        """
         pocket_csv = target_dir / "pocket_info.csv"
         if not pocket_csv.exists():
-            return None
+            return None, None
         pdbid, chain = pdbid_chain.split('_', 1)
         with open(pocket_csv) as f:
             for row in csv.DictReader(f):
                 if row['PDB_ID'].upper() == pdbid.upper() and row['Chain'] == chain:
-                    return row['Ligand_Name']
-        return None
+                    residue = row.get('Ligand_Residue') or None
+                    if residue is None and not self._warned_no_residue:
+                        self._warned_no_residue = True
+                        self.logger.warning(
+                            f"{pocket_csv} has no Ligand_Residue column; every "
+                            "copy of the ligand code will be pooled into one "
+                            "pocket. Re-run stage 2 to write it.")
+                    return row['Ligand_Name'], residue
+        return None, None
 
     def _get_lig_center(
         self, target_dir: Path, pdbid_chain: str

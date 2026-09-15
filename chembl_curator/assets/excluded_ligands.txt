@@ -1320,6 +1320,59 @@ UNX
 UPL
 URE
 
+# Membrane glycerophospholipids
+#
+# Cryo-EM membrane structures ship the lipid annulus as ordered HETATM, and a
+# phospholipid then wins the representative-ligand vote and defines the pocket.
+# 26 targets in curated_v5 were scored this way, the worst being ion channels
+# where the pocket becomes a lipid shell: O43497 279 residues from 13 copies of
+# 3PE, Q9P0X4 232, P15389 235, P35499 208, Q12791 91 from 20 copies of POV.
+#
+# Membership rule: a glycerol backbone carrying a phosphate head group and at
+# least one acyl or alkyl chain. Every code below was confirmed against the PDB
+# chemical component dictionary, not inferred from the atoms present, because a
+# partially modelled copy misreports the composition: PC1 came back as C28 O4
+# from one structure and is C44 H88 N O8 P.
+#
+# Deliberately NOT here, though they pass a phosphorus-and-chain screen:
+#   GRG ELU PS7 WJP  prenyl diphosphates, genuine prenyltransferase substrates
+#   749 B29 SRL      bisphosphonate and phosphonate drugs
+#   K6L              sphingoid phosphate, not glycerol-based
+#   LP4 LP5          lipid A glycolipids, genuine TLR4/MD-2 and LpxC ligands
+#   PC               free phosphocholine head group, a real hapten ligand
+3PC
+3PE
+3PH
+6OU
+80T
+81Q
+CDL
+EGY
+GEL
+LBN
+LPS
+NKP
+P0E
+PC1
+PC5
+PCW
+PEE
+PEF
+PEV
+PFS
+PGW
+PIF
+PLC
+PLX
+POV
+PSF
+PTY
+Q3G
+U9N
+UBL
+WJS
+WSS
+
 # Water
 HOH
 H2O

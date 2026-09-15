@@ -283,11 +283,13 @@ class ExternalPocketLeakage:
                     continue
                 uniprot, pdbid_chain = parts[0], parts[1]
                 pdb_path = data_dir / uniprot / "aligned" / f"{pdbid_chain}.pdb"
-                lig_name = sim._get_lig_name(data_dir / uniprot, pdbid_chain)
+                lig_name, lig_res = sim._get_lig_id(
+                    data_dir / uniprot, pdbid_chain)
                 if not pdb_path.exists() or lig_name is None:
                     skipped += 1
                     continue
-                pocket = chembl_pocket(pdb_path, lig_name, pocket_radius)
+                pocket = chembl_pocket(pdb_path, lig_name, pocket_radius,
+                                       ligand_residue=lig_res)
                 if pocket is None:
                     skipped += 1
                     continue

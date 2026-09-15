@@ -45,6 +45,7 @@ class DecoySelector:
         min_matched_residues: int = 15,
         exclusion_mode: str = "or",
         tanimoto_thresh: float = 0.3,
+        cross_active_thresh: float = 0.9,
         mw_window: float = 50.0,
         clogp_window: float = 2.0,
         tpsa_window: float = 50.0,
@@ -64,7 +65,12 @@ class DecoySelector:
                 RMSD to count. See _load_pocket_similar.
             exclusion_mode: "or" = exclude if seqid OR pocket RMSD matches;
                             "and" = exclude only if BOTH match.
-            tanimoto_thresh: Max Tanimoto similarity between active and decoy.
+            tanimoto_thresh: Max Tanimoto similarity between a decoy and the
+                active it is paired with.
+            cross_active_thresh: Max Tanimoto similarity between a decoy and
+                any OTHER active of the same target. Deliberately looser than
+                tanimoto_thresh; see _select_decoys_for_active for why the two
+                cannot be equal.
             mw_window, clogp_window, tpsa_window, hbd_window, hba_window,
             arm_ring_window: Property matching windows.
             max_selection_count: Max times a compound may be used as a decoy.
@@ -78,6 +84,7 @@ class DecoySelector:
         self.min_matched_residues = min_matched_residues
         self.exclusion_mode = exclusion_mode
         self.tanimoto_thresh = tanimoto_thresh
+        self.cross_active_thresh = cross_active_thresh
         self.mw_window = mw_window
         self.clogp_window = clogp_window
         self.tpsa_window = tpsa_window
@@ -226,8 +233,18 @@ class DecoySelector:
         sel_count: Dict[str, int],
         max_sel: int,
         stats: Dict[str, int],
+        target_fps: Optional[List] = None,
     ) -> List[str]:
-        """Select up to max_decoys for a single active compound."""
+        """Select up to max_decoys for a single active compound.
+
+        Two similarity bars, not one. tanimoto_thresh against `ad`, the active
+        being paired, and the looser cross_active_thresh against every active
+        of the target in target_fps. A decoy paired with active A used to be
+        free to be the same molecule as active B of the same target, and
+        measured.tsv catches that only when the compound happens to have been
+        tested against the target. Property matching pushes the same way, since
+        candidates matched to A's size and logP drift toward B.
+        """
         decoys: List[str] = []
         shuffled = pool_keys.copy()
         random.shuffle(shuffled)
@@ -258,9 +275,22 @@ class DecoySelector:
                 stats['n_excl_prop'] += 1
                 continue
 
-            # Chemical dissimilarity filter
+            # Chemical dissimilarity against the active being paired.
             if DataStructs.TanimotoSimilarity(ad['fp'], cd['fp']) > self.tanimoto_thresh:
                 stats['n_excl_sim'] += 1
+                continue
+
+            # A looser bar against every OTHER active of the target. The same
+            # 0.3 cannot be used here: it rejects 13.2% of what the pool can
+            # supply, and refilling that needs 202% of the spare capacity the
+            # reuse cap leaves, so the run would underfill instead. At 0.9 the
+            # cut is 0.01% of pairs and refill costs 0.2% of the spare, while
+            # still catching the case this exists for, a decoy that is the same
+            # molecule as a binder it was never paired with.
+            if target_fps and max(
+                DataStructs.BulkTanimotoSimilarity(cd['fp'], target_fps)
+            ) > self.cross_active_thresh:
+                stats['n_excl_cross_active'] += 1
                 continue
 
             decoys.append(cid)
@@ -385,6 +415,9 @@ class DecoySelector:
                 excluded |= target_actives.get(sim_target, set())
             stats['n_excluded_compounds'] += len(excluded)
 
+            # Built once per target, not once per active.
+            target_fps = [pool[a]['fp'] for a in actives if a in pool]
+
             results: List[tuple] = []
             for active_id in actives:
                 if active_id not in pool:
@@ -393,7 +426,7 @@ class DecoySelector:
 
                 decoys = self._select_decoys_for_active(
                     pool[active_id], excluded, pool, pool_keys,
-                    sel_count, max_sel, stats,
+                    sel_count, max_sel, stats, target_fps,
                 )
                 if len(decoys) < self.max_decoys:
                     stats['n_underfilled'] += 1
@@ -412,6 +445,7 @@ class DecoySelector:
             f"Exclusions: receptor={stats['n_excl_receptor']}, "
             f"count={stats['n_excl_count']}, "
             f"property={stats['n_excl_prop']}, "
-            f"similarity={stats['n_excl_sim']}"
+            f"similarity={stats['n_excl_sim']}, "
+            f"cross_active={stats['n_excl_cross_active']}"
         )
         return dict(stats)

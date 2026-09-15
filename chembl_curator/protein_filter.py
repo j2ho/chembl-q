@@ -55,12 +55,22 @@ class LigandInfo:
     ligand_name: str
     center: np.ndarray  # 3D coordinates
     chain: str
+    # Residue sequence number with its insertion code, columns 23-27. One
+    # LigandInfo is one physical molecule, so a homo-oligomer with the same
+    # ligand in four subunits yields four of these rather than one object
+    # whose centroid sits in the middle of the assembly.
+    resseq: str = ""
     # Heavy-atom coordinates, kept so closest-approach between two ligands can
     # be measured. Centroid distance alone is contaminated by ligand size.
     coords: Optional[np.ndarray] = None
     n_heavy: int = 0
     burial: float = 0.0      # mean protein heavy atoms within BURIAL_SHELL
     n_contacts: int = 0      # protein atoms within 4.5 A
+
+    @property
+    def residue_key(self) -> str:
+        """Chain and residue number, as pocket_info.csv records it."""
+        return f"{self.chain}:{self.resseq.strip()}"
 
 
 class ProteinFilter:
@@ -475,7 +485,15 @@ class ProteinFilter:
 
         try:
             with open(pdb_file, 'r') as f:
+                # First model only; see align_pdb for why multi-model files
+                # need saying so explicitly.
+                in_later_model = False
                 for line in f:
+                    if line.startswith('MODEL '):
+                        in_later_model = line.split()[1:2] not in ([], ['1'])
+                        continue
+                    if in_later_model:
+                        continue
                     if line.startswith('ATOM'):
                         chain = line[21:22].strip()
                         if chain in target_chains:
@@ -514,7 +532,12 @@ class ProteinFilter:
                             y = float(line[38:46])
                             z = float(line[46:54])
 
-                            key = (ligand_name, chain)
+                            # Keyed by residue, not by name: two copies of
+                            # the same ligand in one chain are two molecules in
+                            # two sites. Merging them put the centroid between
+                            # the sites and let a multi-site structure pass the
+                            # single-pocket check.
+                            key = (ligand_name, chain, line[22:27])
                             if key not in ligands:
                                 ligands[key] = []
                             ligands[key].append(np.array([x, y, z]))
@@ -529,7 +552,7 @@ class ProteinFilter:
             prot_trees[chain] = cKDTree(np.array(coords))
 
         ligand_infos = []
-        for (ligand_name, lig_chain), lig_coords in ligands.items():
+        for (ligand_name, lig_chain, lig_resseq), lig_coords in ligands.items():
             lig_arr = np.array(lig_coords)
             has_contact = False
 
@@ -554,6 +577,7 @@ class ProteinFilter:
                 ligand_name=ligand_name,
                 center=np.mean(lig_arr, axis=0),
                 chain=lig_chain,
+                resseq=lig_resseq,
                 coords=lig_arr,
                 n_heavy=len(lig_arr),
                 burial=burial,
@@ -585,7 +609,15 @@ class ProteinFilter:
 
         try:
             with open(pdb_file, 'r') as f:
+                # First model only; see align_pdb for why multi-model files
+                # need saying so explicitly.
+                in_later_model = False
                 for line in f:
+                    if line.startswith('MODEL '):
+                        in_later_model = line.split()[1:2] not in ([], ['1'])
+                        continue
+                    if in_later_model:
+                        continue
                     if line.startswith('ATOM'):
                         chain = line[21:22].strip()
                         if chain in target_chains:
@@ -624,7 +656,12 @@ class ProteinFilter:
                             y = float(line[38:46])
                             z = float(line[46:54])
 
-                            key = (ligand_name, chain)
+                            # Keyed by residue, not by name: two copies of
+                            # the same ligand in one chain are two molecules in
+                            # two sites. Merging them put the centroid between
+                            # the sites and let a multi-site structure pass the
+                            # single-pocket check.
+                            key = (ligand_name, chain, line[22:27])
                             if key not in ligands:
                                 ligands[key] = []
                             ligands[key].append(np.array([x, y, z]))
@@ -640,7 +677,7 @@ class ProteinFilter:
 
         chain_ligands = {chain: [] for chain in target_chains}
 
-        for (ligand_name, lig_chain), lig_coords in ligands.items():
+        for (ligand_name, lig_chain, lig_resseq), lig_coords in ligands.items():
             lig_arr = np.array(lig_coords)
             for target_chain in target_chains:
                 if target_chain not in prot_trees:
@@ -659,6 +696,7 @@ class ProteinFilter:
                         ligand_name=ligand_name,
                         center=np.mean(lig_arr, axis=0),
                         chain=lig_chain,
+                        resseq=lig_resseq,
                         coords=lig_arr,
                         n_heavy=len(lig_arr),
                         burial=burial,
@@ -807,9 +845,29 @@ class ProteinFilter:
             R = xform[:3, :3]
             t = xform[:3, 3]
 
-            # Apply transformation and save target chain (ATOM) and all ligands (HETATM)
+            # Apply transformation and save target chain (ATOM) and all ligands
+            # (HETATM), from the first model only.
+            #
+            # Writing only ATOM/HETATM drops MODEL/ENDMDL, so every model's
+            # atoms used to land in one file with no separator and nothing
+            # downstream could tell them apart. 4,210 of 69,655 cached
+            # structures are multi-model: 1,888 native NMR ensembles and 2,322
+            # mmCIF conversions, where _download_mmcif concatenates one PDB
+            # block per model. Copies are real conformers, a median 4.0 A
+            # apart, not duplicates.
+            in_later_model = False
             with open(query_pdb, 'r') as fin, open(output_pdb, 'w') as fout:
                 for line in fin:
+                    if line.startswith("MODEL "):
+                        # Model 1 is the deposited representative; the rest are
+                        # alternatives, not additional content.
+                        in_later_model = line.split()[1:2] not in ([], ["1"])
+                        continue
+                    if line.startswith("ENDMDL"):
+                        continue
+                    if in_later_model:
+                        continue
+
                     if line.startswith("ATOM"):
                         chain = line[21:22].strip()
                         if chain != target_chain:
@@ -1046,6 +1104,11 @@ class ProteinFilter:
                     'chain': chain,
                     'aligned_file': aligned_pdb.name,
                     'ligand_name': rep.ligand_name,
+                    # The residue, not just the code. align_pdb writes every
+                    # HETATM regardless of chain, so naming the ligand alone
+                    # leaves the pocket builder unable to tell which of the
+                    # copies in the file this pocket was chosen from.
+                    'ligand_residue': rep.residue_key,
                     'center': rep.center
                 })
 
@@ -1057,13 +1120,15 @@ class ProteinFilter:
         pocket_csv = target_dir / "pocket_info.csv"
         with open(pocket_csv, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['PDB_ID', 'Chain', 'Aligned_File', 'Ligand_Name', 'Center_X', 'Center_Y', 'Center_Z'])
+            writer.writerow(['PDB_ID', 'Chain', 'Aligned_File', 'Ligand_Name',
+                             'Ligand_Residue', 'Center_X', 'Center_Y', 'Center_Z'])
             for info in pocket_info:
                 writer.writerow([
                     info['pdb_id'],
                     info['chain'],
                     info['aligned_file'],
                     info['ligand_name'],
+                    info['ligand_residue'],
                     f"{info['center'][0]:.3f}",
                     f"{info['center'][1]:.3f}",
                     f"{info['center'][2]:.3f}"

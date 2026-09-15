@@ -8,6 +8,12 @@
 #SBATCH --time=48:00:00
 #SBATCH -o log.out
 #SBATCH -e log.err
+# normal.q mixes Intel Ice Lake (AVX512) and AMD Zen 2 (no AVX512), and the
+# local mmseqs build needs AVX512: on an AMD node it dies with Illegal
+# instruction, taking stage 5a and stage 8 with it. SLURM defines no node
+# features here, so --exclude is the only lever. star039-046 and star050 were
+# never sampled and are excluded defensively.
+#SBATCH --exclude=star019,star021,star023,star025,star027,star030,star032,star034,star035,star037,star038,star039,star040,star041,star042,star043,star044,star045,star047,star048,star049,star050
 
 # End-to-end ChEMBL-Q build, at the settings the released dataset was built
 # with. Every parameter here is deliberate; see README.md for what each one
@@ -29,7 +35,7 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 CONDA_ENV=chembl-q
-DATA_DIR=${DATA_DIR:-curated_v5}
+DATA_DIR=${DATA_DIR:-curated_v6}
 N_CPUS=${SLURM_CPUS_PER_TASK:-8}
 
 # Pre-downloaded ChEMBL SQLite. To fetch it:
@@ -130,10 +136,18 @@ chembl-curator receptor-sim \
 # is an active of a target with a similar receptor. --min-matched-residues 15
 # rejects a close fit that rests on a handful of residues.
 #
-# --max-selection-count 41 is the released value, pinned rather than derived.
-# It was tight: 88,192 actives x 30 slots is 94% of what 67,795 compounds can
-# supply at that cap, and 84.9% of the pool ended up sitting exactly on it.
-# Leave the flag off to let it move with the data; the run logs both numbers.
+# --max-selection-count is left derived on purpose. It is tight enough to
+# matter: in curated_v5 the derived cap was 41, demand ran at 94% of capacity,
+# and 84.9% of the pool sat exactly on the cap, so a value pinned from a run
+# with a different pool underfills silently rather than erroring. The run logs
+# the value in force, the derived value, and the demand/capacity ratio. Pin it
+# here only once this build's number is known, to reproduce that build.
+#
+# --cross-active-thresh 0.9 is the bar against every OTHER active of the same
+# target, separate from the 0.3 against the paired one. 0.3 there would cut
+# 13.2% of assignments and need twice the spare capacity to refill. 0.9 catches
+# what this is for: ECFP4 is built without chirality, so a stereoisomer of a
+# known binder scores 1.0 and is rejected.
 
 log "Stage 6: selecting decoys"
 chembl-curator select-decoys \
@@ -145,7 +159,7 @@ chembl-curator select-decoys \
     --pocket-rmsd-tsv "$DATA_DIR/pairwise_pocket_hungarian.tsv" \
     --exclusion-mode or \
     --tanimoto-thresh 0.3 \
-    --max-selection-count 41 \
+    --cross-active-thresh 0.9 \
     --seed 42 \
     --log-level INFO
 
@@ -156,8 +170,12 @@ chembl-curator select-decoys \
 # result into chembl_targets.tsv so a benchmark can be scored overall and on a
 # pocket-novel subset.
 
-if [ -n "$BIOLIP_DIR" ] && [ -n "$PDBBIND_REFINED" ]; then
-    if [ ! -f "$EXT_POCKETS" ]; then
+# The cache is built from external structures alone and carries no ChEMBL
+# content, so it survives a rebuild of this dataset. Only 7a needs the raw
+# directories; 7b needs the cache. Requiring the directories for both used to
+# skip the whole stage on a rerun that had the cache but not the sources.
+if [ ! -f "$EXT_POCKETS" ]; then
+    if [ -n "$BIOLIP_DIR" ] && [ -n "$PDBBIND_REFINED" ]; then
         log "Stage 7a: building the external pocket cache"
         chembl-curator external-pockets \
             --biolip-dir "$BIOLIP_DIR" \
@@ -166,9 +184,13 @@ if [ -n "$BIOLIP_DIR" ] && [ -n "$PDBBIND_REFINED" ]; then
             --output "$EXT_POCKETS" \
             --pocket-radius 8.0 --workers "$N_CPUS" --log-level INFO
     else
-        log "Stage 7a: reusing $EXT_POCKETS"
+        log "Stage 7: skipped, no $EXT_POCKETS and no BIOLIP_DIR/PDBBIND_REFINED"
     fi
+else
+    log "Stage 7a: reusing $EXT_POCKETS"
+fi
 
+if [ -f "$EXT_POCKETS" ]; then
     log "Stage 7b: scoring ChEMBL pockets against the external set"
     chembl-curator pocket-leakage \
         --data-dir "$DATA_DIR" \
@@ -177,8 +199,6 @@ if [ -n "$BIOLIP_DIR" ] && [ -n "$PDBBIND_REFINED" ]; then
         --rmsd-report 2.0 \
         --min-matched-residues 15 \
         --workers "$N_CPUS" --log-level INFO
-else
-    log "Stage 7: skipped, no BIOLIP_DIR/PDBBIND_REFINED set"
 fi
 
 # ── Stage 8: train/test split  (~2 min) ──────────────────────────────────────
