@@ -78,6 +78,8 @@ class ProteinFilter:
 
     def __init__(self, curated_dir: Path, log_level: str = "INFO",
                  max_chain_residues: int = 1500,
+                 min_chain_residues: int = 50,
+                 min_chain_coverage: float = 0.1,
                  cache_dir: Optional[Path] = None,
                  use_local_mirror: bool = False):
         """
@@ -96,9 +98,21 @@ class ProteinFilter:
                 the default path the one that is never exercised.
             max_chain_residues: Skip PDB structures whose target chain exceeds
                 this many residues (catches ribosomes, nanodiscs, etc.). 0 = no limit.
+            min_chain_residues: Skip a chain shorter than this. A UniProt entry
+                often maps to a PDB chain that is only a peptide of it: Q92934
+                resolved as the 6-residue BH3 peptide WAQRGR of a 168-residue
+                protein, P01106 as 10 residues of 454. The pocket then belongs
+                to whatever the peptide is bound to, not to the target.
+            min_chain_coverage: Skip a chain covering less than this fraction of
+                the UniProt sequence. The absolute bar alone passes a 23-residue
+                piece of a 1,426-residue protein. 0 = no limit.
+                Both bars are needed: coverage alone would cut a genuine single
+                domain of a large multi-domain protein.
         """
         self.curated_dir = Path(curated_dir)
         self.max_chain_residues = max_chain_residues
+        self.min_chain_residues = min_chain_residues
+        self.min_chain_coverage = min_chain_coverage
         self.cache_dir = Path(cache_dir) if cache_dir else (
             self.curated_dir.parent / "pdb_cache")
         self.use_local_mirror = use_local_mirror
@@ -449,18 +463,66 @@ class ProteinFilter:
         return chains
 
     @staticmethod
-    def _count_chain_residues(pdb_file: Path, chains: List[str]) -> int:
-        """Count Cα atoms in *chains* as a proxy for residue count."""
+    def _count_residues_per_chain(pdb_file: Path) -> Dict[str, int]:
+        """Cα count per chain, first model only.
+
+        Per chain rather than summed: the summed count answers "is this
+        assembly too big", but whether one chain is long enough to be the
+        receptor is a question about that chain.
+        """
+        counts: Dict[str, int] = {}
+        in_later_model = False
+        with open(pdb_file, errors="replace") as f:
+            for line in f:
+                if line.startswith("MODEL "):
+                    in_later_model = line.split()[1:2] not in ([], ["1"])
+                    continue
+                if in_later_model:
+                    continue
+                if line.startswith("ATOM") and line[12:16].strip() == "CA":
+                    counts[line[21]] = counts.get(line[21], 0) + 1
+        return counts
+
+    @classmethod
+    def _count_chain_residues(cls, pdb_file: Path, chains: List[str]) -> int:
+        """Count Cα atoms across *chains* as a proxy for residue count."""
         if not chains:
             return 0
-        chain_set = set(chains)
-        count = 0
-        with open(pdb_file) as f:
-            for line in f:
-                if line.startswith("ATOM") and line[12:16].strip() == "CA":
-                    if line[21] in chain_set:
-                        count += 1
-        return count
+        counts = cls._count_residues_per_chain(pdb_file)
+        return sum(counts.get(c, 0) for c in set(chains))
+
+    def _chains_long_enough(
+        self, pdb_file: Path, chains: List[str], uniprot_len: int,
+        pdb_id: str = "",
+    ) -> List[str]:
+        """Drop chains too short to be the receptor.
+
+        A UniProt entry frequently maps to a PDB chain holding only a peptide
+        of it, and that peptide is usually the ligand of some other protein in
+        the entry. Building a pocket around it describes the wrong molecule.
+        Nothing checked this: there was an upper bound on chain size and no
+        lower one, and pocket_from_structure happens to accept 6 residues.
+        """
+        if self.min_chain_residues <= 0 and self.min_chain_coverage <= 0:
+            return chains
+        counts = self._count_residues_per_chain(pdb_file)
+        kept = []
+        for ch in chains:
+            n = counts.get(ch, 0)
+            cov = (n / uniprot_len) if uniprot_len else 1.0
+            if n < self.min_chain_residues:
+                self.logger.info(
+                    f"Skipping chain {ch} of {pdb_id or pdb_file.stem}: "
+                    f"{n} residues, below {self.min_chain_residues}")
+                continue
+            if uniprot_len and cov < self.min_chain_coverage:
+                self.logger.info(
+                    f"Skipping chain {ch} of {pdb_id or pdb_file.stem}: "
+                    f"{n} of {uniprot_len} UniProt residues "
+                    f"({cov:.1%}), below {self.min_chain_coverage:.0%}")
+                continue
+            kept.append(ch)
+        return kept
 
     def get_ligands_from_pdb(self, pdb_file: Path, target_chains: List[str],
                              skip_modified: bool = True) -> List[LigandInfo]:
@@ -1021,8 +1083,10 @@ class ProteinFilter:
             if not pdb_file.exists():
                 continue
 
-            # Get target chains
-            target_chains = self.parse_chain_from_pdb_info(pdb_info)
+            # Get target chains, dropping any too short to be the receptor
+            target_chains = self._chains_long_enough(
+                pdb_file, self.parse_chain_from_pdb_info(pdb_info),
+                len(sequence) if sequence else 0, pdb_info.pdb_id)
             if not target_chains:
                 continue
 
