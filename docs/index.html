@@ -132,6 +132,36 @@ pre .c { color: var(--muted); } pre .k { color: var(--accent); }
 footer { border-top: 1px solid var(--rule); padding: 2.5rem 0 3.5rem; text-align: center; font-family: var(--h); font-size: .87rem; color: var(--muted); }
 a:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) { * { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* the one recommendation a reader should leave with */
+.abstract .headline {
+  margin-top: 1.4rem; padding: .95rem 1.15rem;
+  background: var(--accent-soft); border-left: 3px solid var(--accent);
+  text-align: left; hyphens: none; font-size: .95em;
+}
+.abstract .headline a { white-space: nowrap; }
+
+/* section rail, wide screens only */
+.rail {
+  /* Sits outside the 1080px content column, never over it. At the 1440px
+     breakpoint the gutter is (1440-1080)/2 = 180px and the rail needs 152px
+     plus a gap, so below that it is hidden rather than overlapped. */
+  position: fixed; top: 50%; transform: translateY(-50%);
+  right: calc((100vw - var(--wide)) / 2 - 10.5rem);
+  width: 9.5rem; font-family: var(--h); font-size: .72rem;
+  letter-spacing: .02em; line-height: 1.45; z-index: 20;
+}
+.rail ol { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--rule); }
+.rail li { margin: 0; }
+.rail a {
+  display: block; padding: .3rem 0 .3rem .7rem; margin-left: -1px;
+  border-left: 2px solid transparent;
+  color: var(--muted); text-decoration: none;
+}
+.rail a:hover, .rail a:focus-visible { color: var(--ink); border-left-color: var(--rule-2); }
+.rail a[aria-current="true"] { color: var(--accent); border-left-color: var(--accent); }
+@media (max-width: 1439px) { .rail { display: none; } }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 </style>
 <style>
 #sv-0-0:checked ~ .panel .tc[data-c="0"],
@@ -192,6 +222,18 @@ a:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-
     </p>
   </div>
 
+  <nav class="rail" aria-label="Sections">
+    <ol>
+      <li><a href="#abstract">Abstract</a></li>
+      <li><a href="#problem">The problem</a></li>
+      <li><a href="#method">How the split is made</a></li>
+      <li><a href="#results">What overlap remains</a></li>
+      <li><a href="#release">What is released</a></li>
+      <li><a href="#usage">Rebuilding it</a></li>
+      <li><a href="#cite">Citation</a></li>
+    </ol>
+  </nav>
+
   <section id="abstract">
     <h2>Abstract</h2>
     <div class="abstract">
@@ -216,6 +258,13 @@ a:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-
         The dataset ships 282,829 actives, 60,701 experimentally measured inactives kept apart
         from decoys, and 3.1&nbsp;million property-matched receptor-aware active&ndash;decoy
         pairs, together with every similarity measurement behind the split.
+      </p>
+      <p class="headline">
+        <strong>Score on the 125 held-out targets with at least five actives</strong> &mdash;
+        7,913 actives and 234,456 decoys, a median of 17 actives per target. That is 29% of the
+        held-out targets and 95% of the compounds, because 208 of the 425 have exactly one
+        active, where a per-target AUC can only be 0 or 1. All 425 ship; two narrower subsets
+        are flagged. <a href="#release">What is released &rarr;</a>
       </p>
     </div>
   </section>
@@ -540,3 +589,28 @@ bash run_full.sh
   Curated from ChEMBL 36 &middot; structures from RCSB &middot; held out against PDBbind v2020 and BioLiP<br>
   <a href="https://github.com/j2ho/chembl-q">github.com/j2ho/chembl-q</a>
 </div></footer>
+
+<script>
+// Highlight the section the reader is in. No dependency, no layout effect;
+// the rail is a plain anchor list if this never runs.
+(function () {
+  var links = {}, rail = document.querySelector('.rail');
+  if (!rail || !('IntersectionObserver' in window)) return;
+  rail.querySelectorAll('a').forEach(function (a) {
+    links[a.getAttribute('href').slice(1)] = a;
+  });
+  var seen = {};
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
+    var current = null;
+    Object.keys(links).forEach(function (id) { if (seen[id] && !current) current = id; });
+    Object.keys(links).forEach(function (id) {
+      links[id].setAttribute('aria-current', String(id === current));
+    });
+  }, { rootMargin: '-45% 0px -45% 0px' });
+  Object.keys(links).forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) io.observe(el);
+  });
+})();
+</script>
