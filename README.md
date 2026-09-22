@@ -37,6 +37,34 @@ Pocket novelty is reported, not enforced: 188 of the 380 test targets with an ex
 
 ---
 
+## What to score on
+
+The dataset ships as a tarball (**upload it and put the DOI here** — the archive is ~22 MB for `benchmark/` alone, ~49 GB with the structures, so the two are worth publishing separately). `benchmark/` is the part you need to evaluate a model: a labelled screening list per target, with SMILES, so nothing has to be reconstructed and `compound_pool.pkl` never has to be opened.
+
+```
+benchmark/targets.tsv           425 rows: counts, pocket overlap, subset flags
+benchmark/screen/{UniProt}.tsv  chembl_id, label, smiles, decoy_for
+
+label = active   a binder, exact measurement at or below 10 µM
+        decoy    assumed non-binder, an active of a dissimilar receptor
+        inactive measured non-binder
+```
+
+**Score on the 125 targets with at least five actives** (`pass_reps5`). That is 29% of the held-out targets and 95% of the compounds — 208 of the 425 have exactly one active, where a per-target AUC is either 0 or 1 and averaging them reports noise. All 425 ship anyway: one measured active is still a measurement, and a method that ranks one compound against thirty controls may want them.
+
+|                             | targets | actives | decoys | median actives |
+|-----------------------------|--------:|--------:|-------:|---------------:|
+| everything held out         |     425 |   8,367 | 247,226 |              2 |
+| **at least 5 actives**      | **125** | **7,913** | **234,456** |         **17** |
+| + no pocket within 1 Å      |      97 |   6,120 | 180,941 |             17 |
+| strict (`pass_strict_2A`)   |      52 |   3,343 |  98,311 |             24 |
+
+The strict set additionally drops every target whose pocket comes within 2 Å of a PDBbind or BioLiP one, and every active that is a training compound or shares its Murcko scaffold with one. Report the primary set; use the strict set to show a result is not an artefact of the overlap that remains.
+
+Two things the table does not say. Decoys and measured inactives are different claims and should not be pooled — a decoy is an assumption, an inactive is a measurement, and there are 7,320 of the latter against 247,226 decoy assignments. And `n_actives_organic_only` counts the actives a conventional featuriser can read: two targets (P0A9P4, P36776) are entirely selenium or boronic-acid chemistry, which MMFF94 has no parameters for. They are recorded rather than removed, because which elements a model can read is the model's property, not the target's.
+
+---
+
 ## Pipeline
 
 | Stage | Command | Output |
@@ -292,9 +320,13 @@ curated_v6/
 ├── pairwise_seqid.tsv             # MMseqs2 all-vs-all
 ├── pairwise_pocket_hungarian.tsv  # 1,155,960 internal pocket pairs
 ├── external_pocket_best.tsv       # closest PDBbind/BioLiP pocket per target
-├── external_pocket_hits_2A.tsv    # every pair under 2 Å
+├── external_pocket_hits.tsv       # every pair under the reported cutoff
 ├── train.txt / test.txt           # one line per active, with a sampling weight
 ├── chembl_targets.tsv             # split, counts, and the external pocket match
+├── benchmark/                     # the released evaluation set, see above
+│   ├── targets.tsv                #   425 rows, subset flags
+│   ├── screen/{UniProt}.tsv       #   chembl_id, label, smiles, decoy_for
+│   └── README.md
 │
 └── {UniProt}/
     ├── actives.tsv                # chembl_id, pchembl, smiles

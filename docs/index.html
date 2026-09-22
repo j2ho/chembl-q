@@ -171,7 +171,7 @@ a:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-
     <div class="btns">
       <a class="btn" href="https://github.com/j2ho/chembl-q">Code</a>
       <a class="btn alt" href="https://github.com/j2ho/chembl-q#readme">Documentation</a>
-      <a class="btn alt" href="#usage">Get the data</a>
+      <a class="btn alt" href="#release">Get the data</a>
       <a class="btn alt" href="#cite">Cite</a>
     </div>
   </header>
@@ -433,12 +433,70 @@ a:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-
     </figure>
   </section>
 
-  <section id="usage">
-    <h2>Using the dataset</h2>
+  <section id="release">
+    <h2>What is released, and what to score on</h2>
     <div class="text">
       <p>
-        One directory per UniProt accession with actives, measured inactives, the full tested list,
-        decoys and superposed structures, plus dataset-level similarity tables. Everything is TSV.
+        The download is one tarball of the built dataset. Inside it,
+        <code>benchmark/</code> is the part you need to evaluate a model: a labelled
+        screening list per target, with SMILES, so nothing has to be reconstructed and no
+        Python pickle has to be opened. It is 22&nbsp;MB on its own, against roughly
+        49&nbsp;GB with the superposed structures, so the two are published separately.
+        <!-- TODO: fill in the archive DOI and link once uploaded -->
+      </p>
+    </div>
+<div class="text"><pre>benchmark/targets.tsv           <span class="c">425 rows: counts, pocket overlap, subset flags</span>
+benchmark/screen/{UniProt}.tsv  <span class="c">chembl_id, label, smiles, decoy_for</span>
+
+<span class="c">label = active   | a binder, exact measurement at or below 10 uM</span>
+<span class="c">        decoy    | assumed non-binder, an active of a dissimilar receptor</span>
+<span class="c">        inactive | measured non-binder</span></pre></div>
+    <div class="text" style="margin-top:1.6rem">
+      <p>
+        <strong>Score on the 125 targets with at least five actives</strong>
+        (<code>pass_reps5</code>). That is 29% of the held-out targets and 95% of the
+        compounds: 208 of the 425 have exactly one active, where a per-target AUC is
+        either 0 or 1 and averaging them reports noise. The full 425 ship anyway, since
+        a single measured active is still a real measurement and a method that ranks
+        one compound against thirty controls may want them.
+      </p>
+      <p>
+        Two narrower sets are flagged for anyone who wants them. Adding <em>no external
+        pocket within 1&nbsp;&Aring;</em> leaves 97 targets. The strict set
+        (<code>pass_strict_2A</code>) also drops every target whose pocket comes within
+        2&nbsp;&Aring; and every active that is a training compound or shares its Murcko
+        scaffold, leaving 52 targets and 3,343 actives. Report the primary set; use the
+        strict set to show a result is not an artefact of the overlap that remains.
+      </p>
+    </div>
+<div class="text"><pre><span class="c">                                targets  actives    decoys  median actives</span>
+everything held out                 425    8,367   247,226        2
+at least 5 actives  <span class="c">(primary)</span>     125    7,913   234,456       17
+  + no pocket within 1 A             97    6,120   180,941       17
+strict                               52    3,343    98,311       24</pre></div>
+    <div class="text" style="margin-top:1.6rem">
+      <p class="note">
+        Decoys and measured inactives are different claims and should not be pooled. A
+        decoy is an assumption; nobody tested it against this target. An inactive is a
+        measurement, and there are 7,320 of them against 247,226 decoy assignments.
+        Score against decoys for comparability with DUD-E and its successors, against
+        inactives when the claim should rest on experiment.
+        <code>n_actives_organic_only</code> counts the actives a conventional
+        featuriser can read: two targets are entirely selenium or boronic-acid
+        chemistry, which MMFF94 has no parameters for, and they are recorded rather
+        than removed.
+      </p>
+    </div>
+  </section>
+
+  <section id="usage">
+    <h2>Rebuilding it</h2>
+    <div class="text">
+      <p>
+        Beside <code>benchmark/</code> the tarball carries the working data: one directory per
+        UniProt accession with actives, measured inactives, the full tested list, decoys and
+        superposed structures, plus the dataset-level similarity tables. Everything is TSV. The
+        pipeline that produced it is this repository, and every stage can be re-run on its own.
       </p>
     </div>
 <div class="text"><pre><span class="c"># install</span>
