@@ -35,7 +35,7 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 CONDA_ENV=chembl-q
-DATA_DIR=${DATA_DIR:-curated_v6}
+DATA_DIR=${DATA_DIR:-chembl-q-data}
 N_CPUS=${SLURM_CPUS_PER_TASK:-8}
 
 # Pre-downloaded ChEMBL SQLite. To fetch it:
@@ -137,11 +137,11 @@ chembl-curator receptor-sim \
 # rejects a close fit that rests on a handful of residues.
 #
 # --max-selection-count is left derived on purpose. It is tight enough to
-# matter: in curated_v5 the derived cap was 41, demand ran at 94% of capacity,
-# and 84.9% of the pool sat exactly on the cap, so a value pinned from a run
-# with a different pool underfills silently rather than erroring. The run logs
-# the value in force, the derived value, and the demand/capacity ratio. Pin it
-# here only once this build's number is known, to reproduce that build.
+# matter: on the released build the derived cap was 42, demand ran at 96% of
+# capacity, and most of the pool sat exactly on the cap, so a value pinned
+# from a run with a different pool underfills silently rather than erroring.
+# The run logs the value in force, the derived value, and the demand/capacity
+# ratio. Pin it here only to reproduce one specific build.
 #
 # --cross-active-thresh 0.9 is the bar against every OTHER active of the same
 # target, separate from the 0.3 against the paired one. 0.3 there would cut

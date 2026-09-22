@@ -199,9 +199,9 @@ def parse_ligand_atoms(pdb_path: Path, ligand_name: Optional[str] = None,
     every copy of the code in the file is pooled, and align_pdb writes every
     HETATM regardless of chain: Q12791 pooled 20 copies of the membrane lipid
     POV into a 516-atom "ligand" spanning 71.6 A, which then defined a
-    91-residue pocket across a whole tetramer. 45% of curated_v5 targets were
-    scored on a ligand with more than one copy, the widest an ADP spanning
-    234 A. Callers that have the residue must pass it.
+    91-residue pocket across a whole tetramer. Measured on a build made before
+    this fix, 45% of targets were scored on a ligand with more than one copy,
+    the widest an ADP spanning 234 A. Callers that have the residue must pass it.
     """
     if ligand_residue:
         want_chain, _, want_resseq = ligand_residue.partition(":")

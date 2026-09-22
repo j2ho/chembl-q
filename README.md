@@ -108,7 +108,7 @@ bash run_full.sh          # the whole pipeline at the settings this dataset was 
 Or a stage at a time. `config.json` is the scientific contract — without it the defaults are much looser and the result will not match the shipped dataset.
 
 ```bash
-DATA=curated_v6
+DATA=chembl-q-data
 
 chembl-curator curate --database chembl_36.db --config config.json --output $DATA
 chembl-curator filter-proteins --curated-dir $DATA --n-processes 32 --cache-dir pdb_cache/
@@ -312,7 +312,7 @@ A target is kept out of the test set if any of three rules fires. All three are 
 ## Output
 
 ```
-curated_v6/
+chembl-q-data/
 ├── sequences.fasta                # canonical sequences, all passed targets
 ├── best_structure.tsv             # uniprot -> best ligand-bound chain + resolution
 ├── passed_targets.txt

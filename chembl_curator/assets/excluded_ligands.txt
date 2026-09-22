@@ -1324,9 +1324,9 @@ URE
 #
 # Cryo-EM membrane structures ship the lipid annulus as ordered HETATM, and a
 # phospholipid then wins the representative-ligand vote and defines the pocket.
-# 26 targets in curated_v5 were scored this way, the worst being ion channels
-# where the pocket becomes a lipid shell: O43497 279 residues from 13 copies of
-# 3PE, Q9P0X4 232, P15389 235, P35499 208, Q12791 91 from 20 copies of POV.
+# 26 targets in a build made before this list were scored that way, the worst
+# being ion channels whose pocket becomes a lipid shell: O43497 279 residues
+# from 13 copies of 3PE, Q9P0X4 232, P15389 235, P35499 208, Q12791 91 of POV.
 #
 # Membership rule: a glycerol backbone carrying a phosphate head group and at
 # least one acyl or alkyl chain. Every code below was confirmed against the PDB

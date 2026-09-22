@@ -123,7 +123,7 @@ class TargetSplitter:
         matters: what gets crystallised is a domain, while the ChEMBL target
         is the whole UniProt entry, so the alignment covers a fraction of the
         query even when the external structure is literally the one this
-        target uses. Measured on curated_v5, 120 test targets had their own
+        target uses. Measured on an earlier build, 120 test targets had their own
         representative PDB entry sitting in BioLiP or PDBbind at pocket RMSD
         0.000, and every one of them was let through by the query-side rule:
         median query coverage 0.40, worst 0.07 (IGF2R, 2,491 aa against a
@@ -193,7 +193,7 @@ class TargetSplitter:
 
         The PDB identifier settles it without geometry or alignment: if an
         entry this target was built from is in PDBbind or BioLiP, a model
-        trained on those has seen it. On curated_v5 this blocks 16 test
+        trained on those has seen it. On a full build this blocks 16 test
         targets carrying 145 of 8,611 test actives.
         """
         external_pdbs: Set[str] = set()
@@ -693,7 +693,7 @@ class TargetSplitter:
         carried here as two extra columns. Pocket overlap with PDBbind and
         BioLiP is reported rather than filtered: cutting on it removes the
         data-rich targets, since a fold that has been drugged hard is also a
-        fold those sets hold many structures of. On curated_v5 a 1.0 A cut
+        fold those sets hold many structures of. On a full build a 1.0 A cut
         would have taken 21% of the test targets but 40% of the actives, and
         43 of the 57 remaining kinases. Shipping the number lets a benchmark
         be scored overall and on a pocket-novel subset without rebuilding
