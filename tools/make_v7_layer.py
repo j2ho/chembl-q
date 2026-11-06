@@ -41,7 +41,14 @@ WRITABLE_TOP = (
     "passed_targets.txt",
     "pairwise_seqid.tsv",
     "pairwise_pocket_hungarian.tsv",
+    "sequences.fasta",        # stage 8 reads it; written by stage 2
 )
+
+# Stage OUTPUTS, deliberately not copied. Carrying the source's train.txt and
+# test.txt across would leave the previous release's splits sitting in the
+# layer looking like this one's, which is exactly the failure mode where a
+# stage dies and nobody notices because a plausible file is already there.
+NOT_COPIED = ("train.txt", "test.txt")
 
 
 def targets_of(root: Path):
@@ -60,8 +67,16 @@ def build(src: Path, dst: Path, weak_from: Path | None) -> int:
         if source.exists() and not (dst / name).exists():
             shutil.copy2(source, dst / name)
     for extra in src.glob("*.tsv"):
+        if extra.name in NOT_COPIED:
+            continue
         if not (dst / extra.name).exists():
             shutil.copy2(extra, dst / extra.name)
+
+    missing = [n for n in WRITABLE_TOP if not (dst / n).exists()]
+    if missing:
+        print(f"top-level inputs absent from both {src} and the layer: "
+              f"{missing}", file=sys.stderr)
+        return 1
 
     n_weak = n_missing_weak = 0
     for name in names:
