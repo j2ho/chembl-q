@@ -45,7 +45,11 @@ def _build(tmp, write_measured):
         (data_dir / "P0" / "measured.tsv").write_text("chembl_id\nACT1\nMEAS1\nMEAS2\n")
     pool = {k: _entry(v, {"P0"} if k == "ACT1" else {"PX"}) for k, v in SMILES.items()}
     with open(data_dir / "compound_pool.pkl", "wb") as f:
-        pickle.dump({"pool": pool, "target_actives": {"P0": {"ACT1"}}}, f)
+        pickle.dump({
+            "pool": pool,
+            "target_actives": {"P0": {"ACT1"}},
+            "target_ref_fps": {"P0": [pool["ACT1"]["fp"]]},
+        }, f)
     return data_dir
 
 

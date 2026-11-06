@@ -105,7 +105,10 @@ chembl-curator cluster-actives \
     --workers "$N_CPUS" \
     --log-level INFO
 
-# ── Stage 4: compound pool  (~1 min) ─────────────────────────────────────────
+# ── Stage 4: compound pool  (~2 min) ─────────────────────────────────────────
+# Also builds the cross-active reference set stage 6 compares against, which
+# needs weak.tsv from stage 1 and pocket_info.csv from stage 2. Re-run it after
+# either of those, or stage 6 refuses to start.
 
 log "Stage 4: building compound pool"
 chembl-curator build-pool \
@@ -143,11 +146,23 @@ chembl-curator receptor-sim \
 # The run logs the value in force, the derived value, and the demand/capacity
 # ratio. Pin it here only to reproduce one specific build.
 #
-# --cross-active-thresh 0.9 is the bar against every OTHER active of the same
-# target, separate from the 0.3 against the paired one. 0.3 there would cut
-# 13.2% of assignments and need twice the spare capacity to refill. 0.9 catches
-# what this is for: ECFP4 is built without chirality, so a stereoisomer of a
-# known binder scores 1.0 and is rejected.
+# --cross-active-thresh 0.5 is the bar against the target's whole reference
+# set, separate from the 0.3 against the paired active. Stage 4 builds that
+# reference from every active (not the cluster representatives), every
+# same-pocket cocrystal ligand, and every weak binder; measured inactives are
+# deliberately left out, since resembling a confirmed non-binder is a point in
+# a decoy's favour.
+#
+# Measured on the previous build, against the full reference: 16.34% of
+# assignments sat above 0.3, 0.855% above 0.5, 0.097% above 0.7. 0.3 needs
+# twice the spare capacity the reuse cap leaves and ends in underfill; 0.5
+# refilled to 3,140,664 pairs with only 2,016 actives short.
+#
+# The reference set matters more than the number. At 0.9 against
+# representatives only, 94 assignments still reached above 0.9 similarity to a
+# non-representative active of their own target - one of them an exact
+# duplicate - and 14 were the same molecule as a cocrystal ligand of the very
+# target they were a decoy for.
 
 log "Stage 6: selecting decoys"
 chembl-curator select-decoys \
@@ -159,7 +174,7 @@ chembl-curator select-decoys \
     --pocket-rmsd-tsv "$DATA_DIR/pairwise_pocket_hungarian.tsv" \
     --exclusion-mode or \
     --tanimoto-thresh 0.3 \
-    --cross-active-thresh 0.9 \
+    --cross-active-thresh 0.5 \
     --seed 42 \
     --log-level INFO
 

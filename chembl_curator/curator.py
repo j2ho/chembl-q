@@ -21,6 +21,7 @@ class CurationResults:
     total_compounds: int
     output_directory: Path
     total_inactives: int = 0
+    total_weak: int = 0
     total_conflicts: int = 0
     total_measured: int = 0
 
@@ -349,6 +350,7 @@ class ChEMBLCurator:
             potency_types=frozenset(self.config.activity_types),
         )
 
+        weaks: Dict[str, List[Tuple[str, str]]] = {}
         inactives: Dict[str, List[Tuple[str, str]]] = {}
         conflicts: Dict[str, List[Tuple]] = {}
         measured: Dict[str, Set[str]] = {}
@@ -370,6 +372,12 @@ class ChEMBLCurator:
                 )
             elif verdict.is_inactive:
                 inactives.setdefault(uniprot_id, []).append((compound_id, evidence))
+            elif verdict.label is Label.WEAK:
+                # Activity was observed, just above active_max_nm. A weak
+                # binder is still a binder, so it belongs in the cross-active
+                # reference set even though it is not an active. Written here
+                # because nothing else records the label.
+                weaks.setdefault(uniprot_id, []).append((compound_id, evidence))
 
         # Active pairs are measured too, even when this pass saw no negative row.
         for uniprot_id, compound_id in active_pairs:
@@ -391,6 +399,11 @@ class ChEMBLCurator:
                 for compound_id, evidence in sorted(inactives.get(uniprot_id, [])):
                     f.write(f"{compound_id}\t{evidence}\t{chembl_to_smiles[compound_id]}\n")
 
+            with open(target_dir / "weak.tsv", 'w') as f:
+                f.write("chembl_id\tevidence\tsmiles\n")
+                for compound_id, evidence in sorted(weaks.get(uniprot_id, [])):
+                    f.write(f"{compound_id}\t{evidence}\t{chembl_to_smiles[compound_id]}\n")
+
             with open(target_dir / "measured.tsv", 'w') as f:
                 f.write("chembl_id\n")
                 for compound_id in sorted(measured[uniprot_id]):
@@ -407,10 +420,12 @@ class ChEMBLCurator:
                         )
 
         results.total_inactives = sum(len(v) for v in inactives.values())
+        results.total_weak = sum(len(v) for v in weaks.values())
         results.total_conflicts = len(conflict_ids)
         results.total_measured = sum(len(v) for v in measured.values())
         self.logger.info(
             f"Negatives: {results.total_inactives} inactive pairs, "
+            f"{results.total_weak} weak pairs (binders above active_max_nm), "
             f"{results.total_conflicts} conflicts removed, "
             f"{n_contested} contested pairs kept active on potency, "
             f"{results.total_measured} measured pairs (decoy exclusion list)"

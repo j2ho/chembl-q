@@ -63,7 +63,14 @@ def _build(tmp):
     pool = {k: _entry(v, {"P0"} if k in actives else {"PX"})
             for k, v in SMILES.items()}
     with open(data_dir / "compound_pool.pkl", "wb") as f:
-        pickle.dump({"pool": pool, "target_actives": {"P0": actives}}, f)
+        pickle.dump({
+            "pool": pool,
+            "target_actives": {"P0": actives},
+            # The cross-active reference is built by stage 4 and is wider than
+            # the representatives; here every active of P0 is its own
+            # representative, so the two coincide.
+            "target_ref_fps": {"P0": [pool[a]["fp"] for a in sorted(actives)]},
+        }, f)
     return data_dir
 
 

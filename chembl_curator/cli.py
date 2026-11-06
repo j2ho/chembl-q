@@ -335,9 +335,10 @@ def receptor_sim(data_dir, mode, seqid_threads, workers, pocket_radius,
               help='"or" = exclude if seqid OR pocket matches; "and" = both must match')
 @click.option('--tanimoto-thresh', type=float, default=0.3, show_default=True,
               help='Max Tanimoto similarity between active and decoy')
-@click.option('--cross-active-thresh', type=float, default=0.9, show_default=True,
-              help='Max Tanimoto between a decoy and any OTHER active of the '
-                   'same target. Looser than --tanimoto-thresh on purpose: at '
+@click.option('--cross-active-thresh', type=float, default=0.5, show_default=True,
+              help='Max Tanimoto between a decoy and the target reference set: '
+                   'every active, every same-pocket cocrystal ligand, every '
+                   'weak binder. Looser than --tanimoto-thresh on purpose: at '
                    '0.3 the cut needs twice the spare capacity the reuse cap '
                    'leaves, so the run underfills instead.')
 @click.option('--max-selection-count', type=int, default=None,

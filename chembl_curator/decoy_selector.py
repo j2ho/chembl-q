@@ -45,7 +45,7 @@ class DecoySelector:
         min_matched_residues: int = 15,
         exclusion_mode: str = "or",
         tanimoto_thresh: float = 0.3,
-        cross_active_thresh: float = 0.9,
+        cross_active_thresh: float = 0.5,
         mw_window: float = 50.0,
         clogp_window: float = 2.0,
         tpsa_window: float = 50.0,
@@ -238,12 +238,16 @@ class DecoySelector:
         """Select up to max_decoys for a single active compound.
 
         Two similarity bars, not one. tanimoto_thresh against `ad`, the active
-        being paired, and the looser cross_active_thresh against every active
-        of the target in target_fps. A decoy paired with active A used to be
-        free to be the same molecule as active B of the same target, and
-        measured.tsv catches that only when the compound happens to have been
-        tested against the target. Property matching pushes the same way, since
-        candidates matched to A's size and logP drift toward B.
+        being paired, and cross_active_thresh against target_fps, the target's
+        whole reference set: every active, every same-pocket cocrystal ligand,
+        every weak binder. A decoy paired with active A used to be free to be
+        the same molecule as active B of the same target, and measured.tsv
+        catches that only when the compound happens to have been tested against
+        the target. Property matching pushes the same way, since candidates
+        matched to A's size and logP drift toward B.
+
+        target_fps is built in compound_pool, not here, and is wider than the
+        cluster representatives on purpose; see that module's docstring.
         """
         decoys: List[str] = []
         shuffled = pool_keys.copy()
@@ -345,6 +349,19 @@ class DecoySelector:
             data = pickle.load(f)
         pool: Dict[str, dict] = data['pool']
         target_actives: Dict[str, set] = data['target_actives']
+
+        # A pool pickle written before the reference set existed would silently
+        # fall back to comparing against cluster representatives, which is the
+        # defect cross_active_thresh was tightened to close. Refuse instead:
+        # stage 4 is a minute, and a quiet half-fix is worse than an error.
+        target_ref_fps: Dict[str, list] = data.get('target_ref_fps') or {}
+        if not target_ref_fps:
+            raise KeyError(
+                "compound_pool.pkl has no 'target_ref_fps'. It was built by an "
+                "older build-pool; re-run `chembl-curator build-pool` so the "
+                "cross-active bar sees all actives, cocrystal ligands and weak "
+                "binders rather than cluster representatives only."
+            )
         pool_keys = list(pool)
         self.logger.info(f"Pool: {len(pool)} compounds, {len(target_actives)} targets")
 
@@ -415,8 +432,15 @@ class DecoySelector:
                 excluded |= target_actives.get(sim_target, set())
             stats['n_excluded_compounds'] += len(excluded)
 
-            # Built once per target, not once per active.
-            target_fps = [pool[a]['fp'] for a in actives if a in pool]
+            # Built once per target, not once per active. Comes from the pool
+            # pickle rather than from `actives` here: the reference set is
+            # every active, cocrystal ligand and weak binder of the target,
+            # while `actives` is the cluster representatives. Deriving it from
+            # `actives` is what let a decoy be an exact copy of a
+            # non-representative active.
+            target_fps = target_ref_fps.get(uniprot) or []
+            if not target_fps:
+                stats['n_targets_no_reference'] += 1
 
             results: List[tuple] = []
             for active_id in actives:

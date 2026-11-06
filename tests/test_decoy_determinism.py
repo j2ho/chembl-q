@@ -73,7 +73,11 @@ def _build(tmp):
     pool = {k: _entry(v, {"P0"}) for k, v in ACTIVES.items()}
     pool.update({k: _entry(v, {"PX"}) for k, v in POOL_EXTRA.items()})
     with open(data_dir / "compound_pool.pkl", "wb") as f:
-        pickle.dump({"pool": pool, "target_actives": {"P0": set(ACTIVES)}}, f)
+        pickle.dump({
+            "pool": pool,
+            "target_actives": {"P0": set(ACTIVES)},
+            "target_ref_fps": {"P0": [pool[a]["fp"] for a in sorted(ACTIVES)]},
+        }, f)
     return data_dir
 
 
