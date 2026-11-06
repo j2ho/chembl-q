@@ -63,11 +63,13 @@ COLUMNS = (
     'ext_pocket_rmsd', 'ext_pocket_entry', 'n_actives_organic_only',
     'n_actives_no_train_compound', 'n_actives_no_train_scaffold',
     'pass_reps5', 'pass_pocket_2A', 'pass_pocket_1A', 'pass_strict_2A',
-    'n_decoys_same_family',
+    'n_decoys_same_family', 'pocket_ligand', 'pocket_is_cofactor',
 )
 
 CLASS_ASSET = (Path(__file__).resolve().parent.parent / 'chembl_curator' /
                'assets' / 'target_class.tsv.gz')
+PROSTHETIC_ASSET = (Path(__file__).resolve().parent.parent / 'chembl_curator' /
+                    'assets' / 'prosthetic_groups.txt')
 
 # The bar for both pass_reps5 (actives) and pass_strict_2A (novel-scaffold
 # actives). A per-target AUC over fewer than five positives is noise.
@@ -159,6 +161,58 @@ def train_reference(data: Path, train: list):
             print(f'  train {i}/{len(train)}: {len(compounds)} compounds, '
                   f'{len(scaffolds)} scaffolds', flush=True)
     return compounds, scaffolds
+
+
+def prosthetic_codes(path: Path) -> set:
+    """PDB component ids of tightly bound prosthetic groups."""
+    if not path.exists():
+        return set()
+    return {line.strip() for line in open(path)
+            if line.strip() and not line.startswith('#')}
+
+
+def pocket_ligands(target_dir: Path) -> list:
+    """The component ids the target's pockets were defined on, deduplicated."""
+    path = target_dir / 'pocket_info.csv'
+    if not path.exists():
+        return []
+    seen = []
+    with open(path) as handle:
+        next(handle, None)
+        for line in handle:
+            parts = line.rstrip('\n').split(',')
+            if len(parts) >= 4 and parts[3] and parts[3] not in seen:
+                seen.append(parts[3])
+    return sorted(seen)
+
+
+def cofactor_flag(target_dir: Path, prosthetic: set):
+    """1 when every pocket of the target was defined on a prosthetic group.
+
+    The dataset's premise is that the actives bind the pocket we define. A
+    tightly bound cofactor stays put and is not what a drug displaces, so when
+    it is the only thing any structure of the target offers, there is nothing
+    supporting that premise for that target. 27 of the 1,506 are in that
+    position; 5 of them clear the five-active bar.
+
+    Reported, not applied, like the other flags. Two reasons it is not a cut.
+    The pocket is sometimes right anyway: for cytochromes P450, the nitric
+    oxide synthase oxygenase domain, aromatase and the peroxidases, inhibitors
+    stack on the cofactor's distal face. And all 26 of those accessions turn
+    out to be targets that DO have a drug-bound structure, so they are not
+    flagged here at all. What is flagged is the group with no such structure:
+    globins, electron-transfer cytochromes, and cases like DHODH where the
+    drug site is a separate channel.
+
+    Blank, never 0, when the asset is missing: 0 reads as "checked, the pocket
+    is fine", which is the opposite of "not checked".
+    """
+    if not prosthetic:
+        return ''
+    ligs = pocket_ligands(target_dir)
+    if not ligs:
+        return ''
+    return int(all(l in prosthetic for l in ligs))
 
 
 def target_classes(path: Path) -> dict:
@@ -301,6 +355,9 @@ def main() -> int:
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--targets-only', action='store_true',
                         help='write targets.tsv and skip screen/')
+    parser.add_argument('--prosthetic', type=Path, default=PROSTHETIC_ASSET,
+                        help='prosthetic group codes; pocket_is_cofactor is '
+                             'left blank without it')
     parser.add_argument('--classes', type=Path, default=CLASS_ASSET,
                         help='uniprot -> protein classification asset; '
                              'build it with tools/build_target_class.py')
@@ -315,6 +372,7 @@ def main() -> int:
     print(f'{len(test)} test targets, {len(train)} train targets', flush=True)
 
     ext = external_pockets(data / 'external_pocket_best.tsv')
+    prosthetic = prosthetic_codes(args.prosthetic)
     classes = target_classes(args.classes)
     if classes:
         all_targets = sorted(set(train) | set(test))
@@ -377,6 +435,8 @@ def main() -> int:
             'n_decoys_same_family': (
                 count_same_family(uniprot, decoys, active_of, classes)
                 if classes else ''),
+            'pocket_ligand': ';'.join(pocket_ligands(tdir)),
+            'pocket_is_cofactor': cofactor_flag(tdir, prosthetic),
         })
         if not args.targets_only:
             totals += write_screen(screen_dir, uniprot, actives, decoys,
