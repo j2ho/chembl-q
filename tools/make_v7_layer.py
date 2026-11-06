@@ -70,7 +70,10 @@ def build(src: Path, dst: Path, weak_from: Path | None) -> int:
         for item in s_dir.iterdir():
             target = d_dir / item.name
             if item.name in LINK_DIRS:
-                if not target.exists(follow_symlinks=False):
+                # lexists, not exists: a dangling link must still count as
+                # present, or this recreates it on every run. The pathlib
+                # keyword that says the same thing needs 3.12; this env is 3.11.
+                if not os.path.lexists(target):
                     target.symlink_to(item.resolve())
             elif item.is_file():
                 if not target.exists():
@@ -111,7 +114,7 @@ def check(src: Path, dst: Path) -> int:
                 problems.append(f"{path} is a symlink -> {os.readlink(path)}")
         for link in LINK_DIRS:
             path = d_dir / link
-            if path.exists(follow_symlinks=False) and not path.is_symlink():
+            if os.path.lexists(path) and not path.is_symlink():
                 problems.append(f"{path} is a real directory, expected a link")
 
     # The decisive test: writing through the layer must not reach the source.
