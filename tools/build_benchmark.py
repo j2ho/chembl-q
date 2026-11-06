@@ -27,6 +27,12 @@ Two definitions were recovered that way rather than guessed, and both matter:
     every training set, so its novelty falls back to the compound id.
     See is_scaffold_novel.
 
+n_decoys_same_family is appended as column 15. It counts assignments whose
+decoy is a documented active of a target sharing this one's full ChEMBL
+protein classification path: 1.725% of v6's assignments. It is reported rather
+than filtered, because neither bar can reach it (97.75% already have a usable
+pocket RMSD, and 85% survive relaxing seqid to 0.4 and pocket RMSD to 3.0 A).
+
 Only test-split targets ship. `train.txt` and `test.txt` are per-active lists
 over three sources, so the target list is the distinct entry_id of their
 `chembl` rows.
@@ -34,8 +40,10 @@ over three sources, so the target list is the distinct entry_id of their
 
 import argparse
 import csv
+import gzip
 import pickle
 import sys
+from collections import defaultdict
 from collections import Counter
 from pathlib import Path
 
@@ -48,12 +56,18 @@ RDLogger.DisableLog('rdApp.*')
 # practice; they are also what a MotifScreen featuriser has no atom type for.
 ORGANIC = {'H', 'C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I'}
 
+# n_decoys_same_family is LAST on purpose: the v6 validation diffs columns
+# 1-14, and appending keeps that diff meaningful as the table grows.
 COLUMNS = (
     'uniprot', 'n_actives', 'n_decoys', 'n_decoys_unique', 'n_inactives',
     'ext_pocket_rmsd', 'ext_pocket_entry', 'n_actives_organic_only',
     'n_actives_no_train_compound', 'n_actives_no_train_scaffold',
     'pass_reps5', 'pass_pocket_2A', 'pass_pocket_1A', 'pass_strict_2A',
+    'n_decoys_same_family',
 )
+
+CLASS_ASSET = (Path(__file__).resolve().parent.parent / 'chembl_curator' /
+               'assets' / 'target_class.tsv.gz')
 
 # The bar for both pass_reps5 (actives) and pass_strict_2A (novel-scaffold
 # actives). A per-target AUC over fewer than five positives is noise.
@@ -147,6 +161,70 @@ def train_reference(data: Path, train: list):
     return compounds, scaffolds
 
 
+def target_classes(path: Path) -> dict:
+    """accession -> set of protein classification paths, from the asset.
+
+    Absent asset means the family column is left empty rather than silently
+    zero: a zero here reads as "no family overlap", which is the opposite of
+    "not measured".
+    """
+    if not path.exists():
+        return {}
+    out = defaultdict(set)
+    with gzip.open(path, 'rt') as handle:
+        next(handle, None)
+        for line in handle:
+            parts = line.rstrip('\n').split('\t')
+            if len(parts) == 2 and parts[1]:
+                out[parts[0]].add(parts[1])
+    return dict(out)
+
+
+def active_of_map(data: Path, targets: list) -> dict:
+    """compound -> set of targets it is a documented active of.
+
+    Every active, not the representatives: the question is whether anyone has
+    measured this compound against a same-family target, and a cluster member
+    is as measured as its representative.
+    """
+    out = defaultdict(set)
+    for uniprot in targets:
+        path = data / uniprot / 'actives.tsv'
+        if not path.exists():
+            continue
+        with open(path) as handle:
+            next(handle, None)
+            for line in handle:
+                if line.strip():
+                    out[line.split('\t')[0]].add(uniprot)
+    return out
+
+
+def count_same_family(uniprot: str, decoys: dict, active_of: dict,
+                      classes: dict) -> int:
+    """Assignments whose decoy is an active of a target sharing a full path.
+
+    Any assignment of this shape already cleared the receptor-similarity
+    exclusion at seqid 0.6 or pocket 2.0 A, so it is a case both bars missed.
+    It is reported, not filtered: 97.75% of these have a usable pocket RMSD, so
+    they are not a coverage gap, and 85% survive relaxing seqid to 0.4 AND
+    pocket to 3.0 A, so no threshold reaches them either.
+    """
+    own = classes.get(uniprot, set())
+    if not own:
+        return 0
+    n = 0
+    for assigned in decoys.values():
+        for cid in assigned:
+            sources = active_of.get(cid)
+            if not sources:
+                continue
+            if any(classes.get(src, set()) & own
+                   for src in sources if src != uniprot):
+                n += 1
+    return n
+
+
 def external_pockets(path: Path) -> dict:
     out = {}
     if not path.exists():
@@ -223,6 +301,9 @@ def main() -> int:
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--targets-only', action='store_true',
                         help='write targets.tsv and skip screen/')
+    parser.add_argument('--classes', type=Path, default=CLASS_ASSET,
+                        help='uniprot -> protein classification asset; '
+                             'build it with tools/build_target_class.py')
     args = parser.parse_args()
 
     data = args.data
@@ -234,6 +315,17 @@ def main() -> int:
     print(f'{len(test)} test targets, {len(train)} train targets', flush=True)
 
     ext = external_pockets(data / 'external_pocket_best.tsv')
+    classes = target_classes(args.classes)
+    if classes:
+        all_targets = sorted(set(train) | set(test))
+        active_of = active_of_map(data, all_targets)
+        print(f'classification for {len(classes)} accessions, '
+              f'{len(active_of)} distinct actives over {len(all_targets)} '
+              f'targets', flush=True)
+    else:
+        active_of = {}
+        print(f'no classification asset at {args.classes}: '
+              f'n_decoys_same_family will be blank', flush=True)
     compounds, scaffolds = train_reference(data, train)
     print(f'train reference: {len(compounds)} compounds, {len(scaffolds)} '
           f'scaffolds', flush=True)
@@ -282,6 +374,9 @@ def main() -> int:
             'pass_pocket_2A': int(pocket2),
             'pass_pocket_1A': int(pocket1),
             'pass_strict_2A': int(strict),
+            'n_decoys_same_family': (
+                count_same_family(uniprot, decoys, active_of, classes)
+                if classes else ''),
         })
         if not args.targets_only:
             totals += write_screen(screen_dir, uniprot, actives, decoys,
@@ -298,6 +393,12 @@ def main() -> int:
     flags = {name: sum(r[name] for r in rows) for name in
              ('pass_reps5', 'pass_pocket_2A', 'pass_pocket_1A',
               'pass_strict_2A')}
+    if classes:
+        same = sum(r['n_decoys_same_family'] for r in rows)
+        total = sum(r['n_decoys'] for r in rows)
+        print(f'  decoys that are an active of a same-family target: {same} '
+              f'of {total} ({100.0 * same / max(total, 1):.3f}%) -- reported, '
+              f'not filtered')
     print(f'wrote {len(rows)} rows to {args.out / "targets.tsv"}')
     print(f'  flags: {flags}')
     if not args.targets_only:

@@ -257,15 +257,18 @@ a:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-
         filter, because cutting on it removes the targets that carry the compounds.
       </p>
       <p>
-        The dataset ships 282,829 actives, 60,701 experimentally measured inactives kept in
-        separate files from the 3.1&nbsp;million generated decoys, and every similarity measurement
-        behind the split. Decoys here are actives of dissimilar receptors, property-matched to the
-        active they are assigned to and never drawn from compounds with a recorded measurement
-        against the target.
+        The dataset ships 282,829 actives, 60,701 experimentally measured inactives and
+        25,964 weak binders, all kept in separate files from the 3,139,682 generated
+        decoys, plus every similarity measurement behind the split. Decoys here are
+        actives of dissimilar receptors, property-matched to the active they are
+        assigned to and never drawn from compounds with a recorded measurement against
+        the target. A decoy also has to stay below ECFP4 Tanimoto 0.5 against
+        everything the target is known to bind: all of its actives, its weak binders
+        and every ligand crystallised in the pocket it is defined on.
       </p>
       <p class="headline">
         <strong>Score on the 125 held-out targets with at least five actives</strong> &mdash;
-        7,913 actives and 234,456 decoys, a median of 17 actives per target. That is 29% of the
+        7,913 actives and 234,442 decoys, a median of 17 actives per target. That is 29% of the
         held-out targets and 95% of the compounds, because 208 of the 425 have exactly one
         active, where a per-target AUC can only be 0 or 1. All 425 ship; two narrower subsets
         are flagged. <a href="#release">What is released &rarr;</a>
@@ -539,27 +542,42 @@ benchmark/screen/{UniProt}.tsv  <span class="c">chembl_id, label, smiles, decoy_
         Two narrower sets are flagged for anyone who wants them. Requiring that <em>no PDBbind or BioLiP
         pocket comes within 1&nbsp;&Aring;</em> leaves 97 targets. The strict set
         (<code>pass_strict_2A</code>) also drops every target whose pocket comes within
-        2&nbsp;&Aring; and every active that is a training compound or shares its Murcko scaffold,
-        leaving 52 targets and 3,343 actives. Report the primary set; use the
+        2&nbsp;&Aring;, then asks for five actives whose Murcko scaffold appears nowhere
+        in the training split, leaving 52 targets and 3,343 actives. That second
+        condition filters targets rather than actives, so 509 of those 3,343 do have a
+        scaffold a model may have seen. Report the primary set; use the
         strict set to show a result is not an artefact of the overlap that remains.
       </p>
     </div>
-<div class="text"><pre><span class="c">                                targets  actives    decoys  median actives</span>
-everything held out                 425    8,367   247,226        2
-at least 5 actives  <span class="c">(primary)</span>     125    7,913   234,456       17
-  + no pocket within 1 A             97    6,120   180,941       17
-strict                               52    3,343    98,311       24</pre></div>
+<div class="text"><pre><span class="c">                                targets  actives    decoys  median actives   same-family</span>
+everything held out                 425    8,367   247,213        2        4,980  2.0%
+at least 5 actives  <span class="c">(primary)</span>     125    7,913   234,442       17        4,680  2.0%
+  + no pocket within 1 A             97    6,120   180,932       17        3,260  1.8%
+strict                               52    3,343    98,305     22.5        2,443  2.5%</pre></div>
     <div class="text" style="margin-top:1.6rem">
       <p class="note">
         Decoys and measured inactives are different claims and should not be pooled. A
         decoy is an assumption; nobody tested it against this target. An inactive is a
-        measurement, and there are 7,320 of them against 247,226 decoy assignments.
+        measurement, and there are 7,320 of them against 247,213 decoy assignments.
         Score against decoys for comparability with DUD-E and its successors, against
         inactives when the claim should rest on experiment.
         <code>n_actives_organic_only</code> counts the actives a conventional
-        featuriser can read: two targets are entirely selenium or boronic-acid
+        featuriser can read: two targets are almost entirely selenium or boronic-acid
         chemistry, which MMFF94 has no parameters for, and they are recorded rather
         than removed.
+      </p>
+      <p class="note">
+        <code>n_decoys_same_family</code> is the caveat to read before quoting a
+        per-target number. A decoy is an active of a receptor dissimilar to this one by
+        sequence identity and pocket RMSD, yet 2.0% of assignments are still a
+        documented active of a target sharing this one's full ChEMBL protein
+        classification path. Neither bar reaches them: 97.75% already have a usable
+        pocket RMSD, so it is not a coverage gap, and 85% survive relaxing sequence
+        identity to 0.4 <em>and</em> pocket RMSD to 3.0&nbsp;&Aring;. So the column is
+        reported rather than filtered, and the spread is what matters. The median
+        target is at 0% and 240 of the 425 are exactly zero; within the primary 125 the
+        median is 0.67%, 43 are clean, the 90th percentile is 12.0%, and P56389 reaches
+        42.1%. Q9Y6N5 is at 19.0% and is in the strict 52.
       </p>
     </div>
   </section>
@@ -584,6 +602,7 @@ bash run_full.sh
 <span class="c"># or score an existing model against the benchmark split</span>
 <span class="c">#   test.txt      one line per active, with a sampling weight</span>
 <span class="c">#   {target}/decoys.tsv   up to 30 property-matched decoys per active</span>
+<span class="c">#   {target}/weak.tsv     binders above 10 uM, excluded from both labels</span>
 <span class="c">#   chembl_targets.tsv   split, counts, nearest PDBbind/BioLiP pocket</span></pre></div>
     <div class="text" style="margin-top:1.6rem">
       <p class="note">

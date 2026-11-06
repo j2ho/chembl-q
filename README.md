@@ -18,16 +18,17 @@ Everything the pipeline measures ships with the data, including the overlap that
 ## The dataset
 
 ```
-1,506 targets      single-pocket, structure-backed
-282,829 actives    exact measurement at or below 10 µM
- 60,701 inactives  experimentally measured, kept apart from decoys
-   3.1M pairs      property-matched, receptor-aware decoys
+    1,506 targets    single-pocket, structure-backed
+  282,829 actives    exact measurement at or below 10 µM
+   60,701 inactives  experimentally measured, kept apart from decoys
+   25,964 weak       binding observed, but above the active cut
+3,139,682 pairs      property-matched, receptor-aware decoys
 
 train  1,081 targets   97,685 actives   median 17 per target
 test     425 targets    8,367 actives   median  2 per target
 ```
 
-Active counts are clustered representatives, which is what a decoy block is attached to; the unclustered total is 282,829.
+The 282,829 is every active. The per-split counts are clustered representatives, 106,052 of them, which is what a decoy block is attached to.
 
 **What the test split guarantees.** No test target has a PDBbind or BioLiP homologue at 0.4 identity, none was built from a PDB entry those sets hold, and none is within 0.4 identity of a training sequence. Median distance from a test pocket to its closest external pocket is 2.01 Å, against 0.25 Å for train — a consequence of the sequence rules, since no split decision is made on geometry.
 
@@ -42,7 +43,8 @@ Pocket novelty is reported, not enforced: 188 of the 380 test targets with an ex
 The dataset ships as a tarball (**upload it and put the DOI here** — the archive is ~22 MB for `benchmark/` alone, ~49 GB with the structures, so the two are worth publishing separately). `benchmark/` is the part you need to evaluate a model: a labelled screening list per target, with SMILES, so nothing has to be reconstructed and `compound_pool.pkl` never has to be opened.
 
 ```
-benchmark/targets.tsv           425 rows: counts, pocket overlap, subset flags
+benchmark/targets.tsv           425 rows: counts, pocket overlap, subset flags,
+                                same-family decoy count
 benchmark/screen/{UniProt}.tsv  chembl_id, label, smiles, decoy_for
 
 label = active   a binder, exact measurement at or below 10 µM
@@ -52,16 +54,20 @@ label = active   a binder, exact measurement at or below 10 µM
 
 **Score on the 125 targets with at least five actives** (`pass_reps5`). That is 29% of the held-out targets and 95% of the compounds — 208 of the 425 have exactly one active, where a per-target AUC is either 0 or 1 and averaging them reports noise. All 425 ship anyway: one measured active is still a measurement, and a method that ranks one compound against thirty controls may want them.
 
-|                             | targets | actives | decoys | median actives |
-|-----------------------------|--------:|--------:|-------:|---------------:|
-| everything held out         |     425 |   8,367 | 247,226 |              2 |
-| **at least 5 actives**      | **125** | **7,913** | **234,456** |         **17** |
-| + no pocket within 1 Å      |      97 |   6,120 | 180,941 |             17 |
-| strict (`pass_strict_2A`)   |      52 |   3,343 |  98,311 |             24 |
+|                             | targets | actives | decoys | median actives | same-family decoys |
+|-----------------------------|--------:|--------:|-------:|---------------:|-------------------:|
+| everything held out         |     425 |   8,367 | 247,213 |              2 | 4,980 (2.0%) |
+| **at least 5 actives**      | **125** | **7,913** | **234,442** |         **17** | **4,680 (2.0%)** |
+| + no pocket within 1 Å      |      97 |   6,120 | 180,932 |             17 | 3,260 (1.8%) |
+| strict (`pass_strict_2A`)   |      52 |   3,343 |  98,305 |           22.5 | 2,443 (2.5%) |
 
-The strict set additionally drops every target whose pocket comes within 2 Å of a PDBbind or BioLiP one, and every active that is a training compound or shares its Murcko scaffold with one. Report the primary set; use the strict set to show a result is not an artefact of the overlap that remains.
+The strict set drops every target whose pocket comes within 2 Å of a PDBbind or BioLiP one, and then asks for five actives whose Murcko scaffold appears nowhere in the training split. Note what that second condition is and is not: it filters *targets*, not actives, so the 3,343 actives of those 52 targets include 509 whose scaffold a model may have seen. Report the primary set; use the strict set to show a result is not an artefact of the overlap that remains.
 
-Two things the table does not say. Decoys and measured inactives are different claims and should not be pooled — a decoy is an assumption, an inactive is a measurement, and there are 7,320 of the latter against 247,226 decoy assignments. And `n_actives_organic_only` counts the actives a conventional featuriser can read: two targets (P0A9P4, P36776) are entirely selenium or boronic-acid chemistry, which MMFF94 has no parameters for. They are recorded rather than removed, because which elements a model can read is the model's property, not the target's.
+Three things the table does not say. Decoys and measured inactives are different claims and should not be pooled — a decoy is an assumption, an inactive is a measurement, and there are 7,320 of the latter against 247,213 decoy assignments.
+
+`n_actives_organic_only` counts the actives a conventional featuriser can read: two targets (P0A9P4, P36776) are almost entirely selenium or boronic-acid chemistry, which MMFF94 has no parameters for. They are recorded rather than removed, because which elements a model can read is the model's property, not the target's.
+
+`n_decoys_same_family` is the honest caveat. A decoy is an active of a receptor dissimilar to this one by sequence identity and pocket RMSD, but 2.0% of assignments are still a documented active of a target sharing this one's full ChEMBL protein classification path. Neither bar can reach them: 97.75% already have a usable pocket RMSD, so it is not a coverage gap, and 85% survive relaxing sequence identity to 0.4 **and** pocket RMSD to 3.0 Å. The column is reported rather than filtered, and the per-target spread is what matters far more than the average. Across the 425 the median target is at **0%** and 240 of them are exactly zero; the mean is 2.8% because a handful are badly affected. Within the scoring set of 125: median 0.67%, 43 targets clean, 90th percentile 12.0%, and P56389 at 42.1%. Q9Y6N5 sits at 19.0% and is in the strict 52. So a per-target number worth leaning on should be read against that target's own figure, never against the 2.0% aggregate.
 
 ---
 
@@ -69,7 +75,7 @@ Two things the table does not say. Decoys and measured inactives are different c
 
 | Stage | Command | Output |
 |-------|---------|--------|
-| 1. Compounds and activities | `curate` | `{target}/actives.tsv`, `inactives.tsv`, `measured.tsv` |
+| 1. Compounds and activities | `curate` | `{target}/actives.tsv`, `inactives.tsv`, `weak.tsv`, `measured.tsv` |
 | 2. Protein structures | `filter-proteins` | `aligned/*.pdb`, `pocket_info.csv`, `sequences.fasta`, `best_structure.tsv` |
 | 3. Active clustering | `cluster-actives` | `{target}/actives_clustered.tsv` |
 | 4. Compound pool | `build-pool` | `compound_pool.pkl` |
@@ -146,17 +152,17 @@ Requiring `pchembl_value >= 5` means only `=` records survive in practice — Ch
 | `active` | exact measurement at or below 10 µM | `actives.tsv` |
 | `inactive_annotated` | an explicit inactive `activity_comment` | `inactives.tsv`, evidence `annotated` |
 | `inactive_potency` | a censored `>` at or above 100 µM | `inactives.tsv`, evidence `potency` |
-| `weak` | exact measurement, but above 10 µM | **nowhere** |
+| `weak` | exact measurement, but above 10 µM | `weak.tsv` |
 | `uninformative` | only censored records below 100 µM | **nowhere** |
 
 A pair carrying both kinds of inactive evidence is written with evidence `annotated;potency`. In the shipped data: 52,579 `annotated`, 7,651 `potency`, 471 both.
 
-`weak` is the one to know about. Binding was observed and it is real information — the compound is simply too weak to call an active. For a benchmark that is the right thing to drop, because a borderline compound belongs in neither column. For **training** it is a signal being thrown away, and one you cannot recover from the shipped files: a weak compound appears only as a bare ID in `measured.tsv`, indistinguishable from a compound that was tested and found inert. If you want it, re-run stage 1 against `labeler.py`, which already computes the class.
+`weak` is the one to know about, and it now ships. Binding was observed and it is real information — the compound is simply too weak to call an active. A benchmark is still right to drop it, because a borderline compound belongs in neither column, but for **training** it is a signal, and it used to be unrecoverable from the shipped files: a weak compound appeared only as a bare ID in `measured.tsv`, indistinguishable from one that was tested and found inert. `weak.tsv` carries 25,964 pairs across the 1,506 shipped targets (75,657 over everything stage 1 curates, most of it on targets that never pass the structure filter). It also does work inside the pipeline now — see the decoy reference set in stage 6.
 
 **Verified inactives are not decoys, and the dataset keeps them apart.** Two different kinds of negative ship here:
 
 - `inactives.tsv` — somebody ran the assay and it did not bind. Trustworthy, scarce (60,701 pairs), and biased by what anyone bothered to test.
-- `decoys.tsv` — generated: actives of other, dissimilar receptors, property-matched to each active. Plentiful (3.1M pairs) and controllable, but an assumption. Nobody checked that these do not bind.
+- `decoys.tsv` — generated: actives of other, dissimilar receptors, property-matched to each active. Plentiful (3,139,682 pairs) and controllable, but an assumption. Nobody checked that these do not bind.
 
 `measured.tsv` is what keeps the two from mixing. Any compound with *any* ChEMBL record against a target — active, inactive, weak, uninformative — is barred from being that target's decoy, because guessing about a pair someone has direct evidence for is indefensible. The benchmark is scored on the generated decoys; the verified inactives sit alongside so a harder, assumption-free evaluation can be built from them.
 
@@ -254,14 +260,26 @@ chembl-curator select-decoys --data-dir $DATA --max-decoys 30 \
 | `--pocket-rmsd-thresh` | 2.0 | Pocket RMSD for receptor exclusion |
 | `--min-matched-residues` | 15 | A close fit over a handful of residues is not evidence |
 | `--tanimoto-thresh` | 0.3 | Maximum similarity to the active being paired |
-| `--cross-active-thresh` | 0.9 | Maximum similarity to any *other* active of the target |
+| `--cross-active-thresh` | 0.5 | Maximum similarity to anything the target is known to bind |
 | `--max-selection-count` | derived | How often one compound may serve as a decoy |
 
-A compound measured against this target is never a decoy for it, whatever the outcome — that is what `measured.tsv` is for. Neither is an active of a target with a similar receptor. Pocket similarity does most of that work: 4,540 pairs qualify on pocket against 240 on sequence.
+A compound measured against this target is never a decoy for it, whatever the outcome — that is what `measured.tsv` is for. Neither is **any** active of a target with a similar receptor: not just that target's cluster representatives, which is what the exclusion used to compare against. The difference is not cosmetic. The decoy pool is exactly the set of representatives, 79,060 of 216,100 distinct actives, so most non-representative actives can never be drawn at all — but 9,479 of them represent a cluster of some *other* target, which puts them in the pool while leaving them invisible to an exclusion keyed on representatives. That gap leaked 13,030 assignments. Pocket similarity does most of the receptor work: 4,540 pairs qualify on pocket against 240 on sequence.
 
 Property windows: ±50 Da MW, ±2 cLogP, ±50 Å² TPSA, ±2 HBD, ±2 HBA, ±1 aromatic ring.
 
-**Two similarity bars, and they are not equal.** 0.3 applies to the active a decoy is paired with; 0.9 applies to every other active of the same target. Without the second, a decoy for active A was free to be the same molecule as active B, since `measured.tsv` only catches that when the compound happens to have been tested there. The bars cannot both be 0.3: the pool is close to saturated — demand runs at 95.8% of what the reuse cap allows — and refilling a 0.3 cut needs twice the spare capacity, so the run would underfill rather than substitute. 0.9 costs 0.01% of assignments and catches what matters, because the fingerprint is built without chirality and a stereoisomer of a known binder therefore scores 1.0.
+**Two similarity bars, and they are not equal.** 0.3 applies to the active a decoy is paired with. 0.5 applies to the target's whole **reference set**: every active in `actives.tsv`, every weak binder in `weak.tsv`, and every cocrystal ligand bound in the pocket the target is defined on. 317,084 fingerprints over 1,506 targets, 210.5 each.
+
+Each member is there for a reason the others do not cover:
+
+- **All actives, not the representatives.** A decoy for active A was free to be the same molecule as active B, since `measured.tsv` catches that only when the compound happens to have been tested there. Comparing against representatives alone let 94 assignments reach 1.0 similarity to a non-representative active of the very target they were a decoy for.
+- **Cocrystal ligands.** They have no ChEMBL id, so no id-based exclusion can see them, yet a solved structure puts the molecule in the pocket. 14 assignments were the same molecule as a cocrystal ligand of their own target. Where several PDB entries have a ligand in that pocket, all of them count; a second ligand elsewhere in the same entry does not, bounded at 10 Å from the pocket centre.
+- **Weak binders.** Activity was observed, just above the active cut. A weak binder is still a binder.
+
+Measured **inactives** are deliberately absent. They are confirmed non-binders, so resembling one is a point in a decoy's favour; excluding on it would invert the rule. They stay excluded by ChEMBL id through `measured.tsv`.
+
+The bars cannot both be 0.3: the pool is close to saturated — demand runs at 95.8% of what the reuse cap allows — and refilling a 0.3 cut needs twice the spare capacity, so the run would underfill rather than substitute. 0.5 is affordable, and the fingerprint is built without chirality, so a stereoisomer of a known binder scores 1.0 and is caught. Against the previous 0.9-on-representatives rule this removes 26,856 assignments (0.855%), of which 3,033 were above 0.7; underfill moved from 2,083 actives to 2,086.
+
+The shipped build was checked against the rule rather than assumed to follow it. Over all 3,139,682 assignments: none exceed 0.5 against the reference set, none duplicate a cocrystal ligand exactly, and none are a non-representative active of a receptor-similar target. The same check on the previous build found 26,856, 14 and 13,030 respectively.
 
 `--max-selection-count` is derived as `ceil(total_actives × max_decoys / pool_size) + 1` unless given. Pin it only to reproduce a specific build: a value carried over from a run with a different pool underfills silently. The log reports the value in force, the derived value, and the demand/capacity ratio.
 
@@ -333,6 +351,7 @@ chembl-q-data/
     ├── actives_clustered.tsv      # + cluster_size
     ├── inactives.tsv              # chembl_id, evidence, smiles — measured, not generated
     │                              #   evidence: annotated | potency | annotated;potency
+    ├── weak.tsv                   # chembl_id, evidence, smiles — binders above 10 µM
     ├── measured.tsv               # every compound tested here, whatever the label;
     │                              #   none of these can be this target's decoy
     ├── decoys.tsv                 # active_chembl_id -> decoy_ids (;-separated)
