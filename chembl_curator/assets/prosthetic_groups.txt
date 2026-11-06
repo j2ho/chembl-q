@@ -1,0 +1,91 @@
+# Tightly bound prosthetic groups: PDB chemical component ids.
+#
+# These stay bound to the protein and are not what a drug displaces. An
+# inhibitor occupies an adjacent substrate site, so a pocket centred on one of
+# these describes the cofactor site rather than the druggable site. They are
+# therefore DEMOTED when one structure offers several ligands (see
+# protein_filter.py), not excluded: a target whose every structure holds only a
+# cofactor still gets its pocket from it, and the flag records that.
+#
+# NAD, NADP, SAM, SAH, ATP and the other co-substrates are deliberately ABSENT.
+# They turn over, and whether an inhibitor competes with them or binds beside
+# them is target-specific: in 1T2F NAD is the ligand that describes the site.
+# Demoting them would move those pockets for no measured reason.
+#
+# Measured on the 1,506-target release: 87 targets had a pocket defined
+# exclusively on a group listed here, and 60 of those had a drug-like ligand in
+# the same structure that lost the ranking. Median distance from the chosen
+# cofactor to that ligand was 8.5 A, against an 8 A pocket radius.
+
+# --- haems ---
+HEM
+HEC
+HEA
+HEB
+HAS
+HDD
+HNI
+COH
+SRM
+MH0
+PP9
+HEO
+DHE
+VER
+HIF
+1CP
+HFM
+HME
+HDM
+HEV
+HEG
+6HE
+7HE
+HCO
+
+# --- flavins ---
+FAD
+FAE
+6FA
+FAS
+FDA
+RFL
+FMN
+FNR
+FMA
+RBF
+
+# --- pyridoxal ---
+PLP
+PMP
+PLR
+PXP
+
+# --- thiamine ---
+TPP
+TDP
+TPW
+HTL
+
+# --- iron-sulfur clusters ---
+SF4
+FES
+F3S
+FS4
+CLF
+SF3
+HC0
+HC1
+CFM
+CFN
+
+# --- other tightly bound groups ---
+COB
+B12
+CNC
+PQQ
+TPQ
+MGD
+MSS
+BTN
+LPA

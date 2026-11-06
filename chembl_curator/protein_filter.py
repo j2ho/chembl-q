@@ -14,9 +14,9 @@ from scipy.spatial import cKDTree
 from dataclasses import dataclass
 
 
-def _load_excluded_ligands() -> set:
-    """Load excluded ligand codes from assets/excluded_ligands.txt."""
-    path = Path(__file__).parent / "assets" / "excluded_ligands.txt"
+def _load_ligand_codes(name: str) -> set:
+    """Load PDB component ids from a one-per-line asset, ignoring comments."""
+    path = Path(__file__).parent / "assets" / name
     codes = set()
     with open(path) as f:
         for line in f:
@@ -26,7 +26,38 @@ def _load_excluded_ligands() -> set:
     return codes
 
 
-EXCLUDED_LIGANDS = _load_excluded_ligands()
+EXCLUDED_LIGANDS = _load_ligand_codes("excluded_ligands.txt")
+
+# Tightly bound prosthetic groups. Not excluded, DEMOTED: see the asset's
+# header and select_representative_ligand.
+PROSTHETIC_GROUPS = _load_ligand_codes("prosthetic_groups.txt")
+
+
+def select_representative_ligand(ligands: list):
+    """The one ligand of a structure that defines its pocket.
+
+    Downstream code takes the pocket centre and the chemical environment from
+    this ligand, so the choice matters. Ranking by contacting residues rather
+    than atom count keeps a large ligand that barely touches this chain from
+    defining a pocket, which is how a 53-atom FAD with a single contact used
+    to win; and in 1T2F, where both NAD and its neighbouring oxamate are
+    present, NAD is the one that describes the site.
+
+    A tightly bound prosthetic group is ranked LAST regardless. Contact count
+    and atom count both favour it -- haem is 43 heavy atoms and deeply buried,
+    FAD is 53 -- so a co-bound inhibitor could never win and the pocket came
+    out on the cofactor. That lost exemestane on aromatase, imatinib on NQO2
+    and flurbiprofen on CYP2C9, among 60 targets of the 1,506-target release;
+    median distance from the chosen cofactor to the ligand it beat was 8.5 A,
+    against an 8 A pocket radius.
+
+    Where a prosthetic group is the ONLY ligand it still wins, because
+    something has to define the pocket. 27 targets are in that position and
+    the pocket there is the cofactor site, which may not be the druggable one.
+    """
+    return max(ligands, key=lambda l: (l.ligand_name not in PROSTHETIC_GROUPS,
+                                       l.n_contacts, l.n_heavy))
+
 
 # Matches CurationConfig.min_heavy_atoms on the ChEMBL side. Without it a
 # three-atom fragment can define a pocket, and the excluded-code list only
@@ -1152,16 +1183,7 @@ class ProteinFilter:
             aligned_ligands = self.get_ligands_from_pdb(aligned_pdb, [chain])
 
             if aligned_ligands:
-                # One representative per structure. Downstream code takes the
-                # pocket centre and the chemical environment from this ligand,
-                # so the choice matters: in 1T2F both NAD and its neighbouring
-                # oxamate are present, and NAD is the one that describes the
-                # site. Ranking by contacting residues rather than atom count
-                # also avoids picking a large ligand that barely touches this
-                # chain, which is how a 53-atom FAD with a single contact used
-                # to end up defining a pocket.
-                rep = max(aligned_ligands,
-                          key=lambda l: (l.n_contacts, l.n_heavy))
+                rep = select_representative_ligand(aligned_ligands)
                 all_ligand_centers.append(rep.center)
                 pocket_info.append({
                     'pdb_id': pdb_info.pdb_id,
