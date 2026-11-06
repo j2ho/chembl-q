@@ -48,6 +48,7 @@ def _build(tmp, write_measured):
         pickle.dump({
             "pool": pool,
             "target_actives": {"P0": {"ACT1"}},
+            "target_all_actives": {"P0": {"ACT1"}},
             "target_ref_fps": {"P0": [pool["ACT1"]["fp"]]},
         }, f)
     return data_dir

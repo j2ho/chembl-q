@@ -74,6 +74,7 @@ def _build(tmp, reference_smiles):
         pickle.dump({
             "pool": pool,
             "target_actives": {"P0": {"REP"}},
+            "target_all_actives": {"P0": {"REP"}},
             "target_ref_fps": {"P0": [_fp(s) for s in reference_smiles]},
         }, handle)
     return data_dir
@@ -141,7 +142,8 @@ def test_missing_reference_set_is_refused_not_ignored(tmp_path):
     pool = {k: _entry(v, {"P0"} if k == "REP" else {"PX"})
             for k, v in POOL_SMILES.items()}
     with open(data_dir / "compound_pool.pkl", "wb") as handle:
-        pickle.dump({"pool": pool, "target_actives": {"P0": {"REP"}}}, handle)
+        pickle.dump({"pool": pool, "target_actives": {"P0": {"REP"}},
+                     "target_all_actives": {"P0": {"REP"}}}, handle)
     with pytest.raises(KeyError, match="target_ref_fps"):
         _decoys(data_dir)
 
@@ -236,3 +238,73 @@ def test_a_ligand_in_the_pocket_in_any_copy_is_kept(tmp_path):
         ("3abc", other, 1.0, 0.0, 0.0),
     ])
     assert len(CompoundPool(log_level="ERROR")._cocrystal_fps(tdir)) == 2
+
+
+# ── The receptor-similarity exclusion ────────────────────────────────────────
+
+def test_non_representative_active_of_a_similar_receptor_is_excluded(tmp_path):
+    """The 13,030-assignment leak.
+
+    SIMPAL is a documented active of PX, a receptor similar enough to P0 to be
+    excluded, but it is not one of PX's cluster representatives. It sits in the
+    pool because it represents a cluster of some third target, exactly the
+    9,479-compound overlap the measurement found. Nothing else catches it: the
+    cross-active bar compares against P0's reference set, not PX's.
+    """
+    data_dir = Path(tmp_path)
+    (data_dir / "P0").mkdir(parents=True)
+    (data_dir / "passed_targets.txt").write_text("P0\nPX\n")
+    (data_dir / "PX").mkdir()
+    # P0 and PX are similar receptors.
+    (data_dir / "pairwise_seqid.tsv").write_text(
+        "query\ttarget\tseqid\nP0\tPX\t0.90\n")
+
+    pool = {k: _entry(v, {"P0"} if k == "REP" else {"PT"})
+            for k, v in POOL_SMILES.items()}
+    with open(data_dir / "compound_pool.pkl", "wb") as handle:
+        pickle.dump({
+            "pool": pool,
+            # PX's representative is something else entirely; FARAWAY is one of
+            # its actives without being its representative.
+            "target_actives": {"P0": {"REP"}, "PX": {"COPY_OF_XTAL"}},
+            "target_all_actives": {"P0": {"REP"},
+                                   "PX": {"COPY_OF_XTAL", "FARAWAY"}},
+            "target_ref_fps": {"P0": [_fp(REPRESENTATIVE)], "PX": []},
+        }, handle)
+
+    selected = _decoys(data_dir, seqid_thresh=0.6)["REP"]
+    assert "FARAWAY" not in selected
+
+
+def test_representatives_only_exclusion_lets_it_through(tmp_path):
+    """Control: keyed on representatives, the same candidate is selected."""
+    data_dir = Path(tmp_path)
+    (data_dir / "P0").mkdir(parents=True)
+    (data_dir / "passed_targets.txt").write_text("P0\nPX\n")
+    (data_dir / "PX").mkdir()
+    (data_dir / "pairwise_seqid.tsv").write_text(
+        "query\ttarget\tseqid\nP0\tPX\t0.90\n")
+
+    pool = {k: _entry(v, {"P0"} if k == "REP" else {"PT"})
+            for k, v in POOL_SMILES.items()}
+    with open(data_dir / "compound_pool.pkl", "wb") as handle:
+        pickle.dump({
+            "pool": pool,
+            "target_actives": {"P0": {"REP"}, "PX": {"COPY_OF_XTAL"}},
+            # The old behaviour: only PX's representatives are known.
+            "target_all_actives": {"P0": {"REP"}, "PX": {"COPY_OF_XTAL"}},
+            "target_ref_fps": {"P0": [_fp(REPRESENTATIVE)], "PX": []},
+        }, handle)
+
+    assert "FARAWAY" in _decoys(data_dir, seqid_thresh=0.6)["REP"]
+
+
+def test_missing_all_actives_is_refused_not_ignored(tmp_path):
+    data_dir = _build(tmp_path, [REPRESENTATIVE])
+    with open(data_dir / "compound_pool.pkl", "rb") as handle:
+        blob = pickle.load(handle)
+    del blob["target_all_actives"]
+    with open(data_dir / "compound_pool.pkl", "wb") as handle:
+        pickle.dump(blob, handle)
+    with pytest.raises(KeyError, match="target_all_actives"):
+        _decoys(data_dir)

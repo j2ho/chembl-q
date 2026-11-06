@@ -23,12 +23,23 @@ Output: compound_pool.pkl with structure:
             }
         },
         'target_actives': {uniprot_id: set of chembl_ids},
+        'target_all_actives': {uniprot_id: set of chembl_ids},
         'target_ref_fps': {uniprot_id: [rdkit ExplicitBitVect, ...]}
     }
 
 `target_actives` holds CLUSTER REPRESENTATIVES and decides which actives get
 decoys drawn for them. Do not widen it: there are 2.7x more actives than
 representatives and the pool cannot feed decoys for all of them.
+
+`target_all_actives` is every active of the target, used only to exclude the
+actives of RECEPTOR-SIMILAR targets. The pool itself is exactly the set of
+representatives (79,060 of 216,100 distinct actives on this build), so most
+non-representative actives can never be drawn at all - but 9,479 of them are a
+representative of some OTHER target, which puts them in the pool while leaving
+them invisible to an exclusion keyed on representatives. That gap leaked 13,030
+assignments: decoys that are a documented active of a receptor similar enough
+to have been excluded. A target's OWN actives need no help here, since
+curator.py folds every active pair into measured.tsv.
 
 `target_ref_fps` is the separate reference set the cross-active bar compares
 against, and it is deliberately wider than `target_actives`:
@@ -215,6 +226,16 @@ class CompoundPool:
             )
         return fps
 
+    @staticmethod
+    def _all_active_ids(target_dir: Path) -> set:
+        """Every active ChEMBL id of the target, representatives included."""
+        path = target_dir / "actives.tsv"
+        if not path.exists():
+            return set()
+        with open(path) as handle:
+            next(handle, None)
+            return {line.split('\t')[0] for line in handle if line.strip()}
+
     def _reference_fps(self, target_dir: Path) -> List:
         """The cross-active reference: all actives, cocrystals, weak binders.
 
@@ -295,6 +316,7 @@ class CompoundPool:
         pool: Dict[str, dict] = {}
         best_pchembl: Dict[str, float] = {}
         target_actives: Dict[str, set] = {}
+        target_all_actives: Dict[str, set] = {}
         target_ref_fps: Dict[str, list] = {}
         skipped = 0
         n_ref_fps = 0
@@ -355,6 +377,8 @@ class CompoundPool:
 
             target_actives[uniprot] = target_set
 
+            target_all_actives[uniprot] = self._all_active_ids(data_dir / uniprot)
+
             reference = self._reference_fps(data_dir / uniprot)
             target_ref_fps[uniprot] = reference
             n_ref_fps += len(reference)
@@ -381,6 +405,7 @@ class CompoundPool:
         data = {
             'pool': pool,
             'target_actives': target_actives,
+            'target_all_actives': target_all_actives,
             'target_ref_fps': target_ref_fps,
         }
         with open(output, 'wb') as f:

@@ -66,6 +66,7 @@ def _build(tmp):
         pickle.dump({
             "pool": pool,
             "target_actives": {"P0": actives},
+            "target_all_actives": {"P0": actives},
             # The cross-active reference is built by stage 4 and is wider than
             # the representatives; here every active of P0 is its own
             # representative, so the two coincide.

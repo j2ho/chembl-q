@@ -76,6 +76,7 @@ def _build(tmp):
         pickle.dump({
             "pool": pool,
             "target_actives": {"P0": set(ACTIVES)},
+            "target_all_actives": {"P0": set(ACTIVES)},
             "target_ref_fps": {"P0": [pool[a]["fp"] for a in sorted(ACTIVES)]},
         }, f)
     return data_dir

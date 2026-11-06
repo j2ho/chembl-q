@@ -357,6 +357,15 @@ class DecoySelector:
         # fall back to comparing against cluster representatives, which is the
         # defect cross_active_thresh was tightened to close. Refuse instead:
         # stage 4 is a minute, and a quiet half-fix is worse than an error.
+        target_all_actives: Dict[str, set] = data.get('target_all_actives') or {}
+        if not target_all_actives:
+            raise KeyError(
+                "compound_pool.pkl has no 'target_all_actives'. Re-run "
+                "`chembl-curator build-pool` so the receptor-similarity "
+                "exclusion covers every active of a similar target, not just "
+                "its cluster representatives."
+            )
+
         target_ref_fps: Dict[str, list] = data.get('target_ref_fps') or {}
         if not target_ref_fps:
             raise KeyError(
@@ -429,10 +438,22 @@ class DecoySelector:
                 continue
 
             # Build exclusion set: everything measured against this target,
-            # plus the actives of every similar receptor.
+            # plus EVERY active of every similar receptor.
+            #
+            # target_all_actives, not target_actives, and that distinction
+            # leaked 13,030 assignments. The pool is exactly the set of cluster
+            # representatives, so most non-representative actives can never be
+            # drawn - but 9,479 of them represent a cluster of some OTHER
+            # target, which puts them in the pool while an exclusion keyed on
+            # representatives cannot see them. Nothing else catches these: the
+            # cross-active bar compares against THIS target's reference set,
+            # not the similar receptor's.
+            #
+            # This target's own actives need no widening; curator.py folds
+            # every active pair into measured.tsv.
             excluded: Set[str] = set(actives) | measured.get(uniprot, set())
             for sim_target in similar_targets.get(uniprot, set()):
-                excluded |= target_actives.get(sim_target, set())
+                excluded |= target_all_actives.get(sim_target, set())
             stats['n_excluded_compounds'] += len(excluded)
 
             # Built once per target, not once per active. Comes from the pool
