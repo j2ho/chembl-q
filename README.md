@@ -44,7 +44,7 @@ The dataset ships as a tarball (**upload it and put the DOI here** — the archi
 
 ```
 benchmark/targets.tsv           425 rows: counts, pocket overlap, subset flags,
-                                same-family decoy count
+                                same-family decoy count, the pocket's ligand
 benchmark/screen/{UniProt}.tsv  chembl_id, label, smiles, decoy_for
 
 label = active   a binder, exact measurement at or below 10 µM
@@ -63,11 +63,24 @@ label = active   a binder, exact measurement at or below 10 µM
 
 The strict set drops every target whose pocket comes within 2 Å of a PDBbind or BioLiP one, and then asks for five actives whose Murcko scaffold appears nowhere in the training split. Note what that second condition is and is not: it filters *targets*, not actives, so the 3,343 actives of those 52 targets include 509 whose scaffold a model may have seen. Report the primary set; use the strict set to show a result is not an artefact of the overlap that remains.
 
-Three things the table does not say. Decoys and measured inactives are different claims and should not be pooled — a decoy is an assumption, an inactive is a measurement, and there are 7,320 of the latter against 247,213 decoy assignments.
+Four things the table does not say. Decoys and measured inactives are different claims and should not be pooled — a decoy is an assumption, an inactive is a measurement, and there are 7,320 of the latter against 247,213 decoy assignments.
 
 `n_actives_organic_only` counts the actives a conventional featuriser can read: two targets (P0A9P4, P36776) are almost entirely selenium or boronic-acid chemistry, which MMFF94 has no parameters for. They are recorded rather than removed, because which elements a model can read is the model's property, not the target's.
 
 `n_decoys_same_family` is the honest caveat. A decoy is an active of a receptor dissimilar to this one by sequence identity and pocket RMSD, but 2.0% of assignments are still a documented active of a target sharing this one's full ChEMBL protein classification path. Neither bar can reach them: 97.75% already have a usable pocket RMSD, so it is not a coverage gap, and 85% survive relaxing sequence identity to 0.4 **and** pocket RMSD to 3.0 Å. The column is reported rather than filtered, and the per-target spread is what matters far more than the average. Across the 425 the median target is at **0%** and 240 of them are exactly zero; the mean is 2.8% because a handful are badly affected. Within the scoring set of 125: median 0.67%, 43 targets clean, 90th percentile 12.0%, and P56389 at 42.1%. Q9Y6N5 sits at 19.0% and is in the strict 52. So a per-target number worth leaning on should be read against that target's own figure, never against the 2.0% aggregate.
+
+`pass_pocket_noncofactor` is the one to check before trusting a per-target result. The dataset's premise is that a target's actives bind the pocket it defines, and for 11 of the 125 nothing in the data supports that: every structure's pocket was taken from a tightly bound prosthetic group (haem, FAD, FMN, PLP, TPP or an iron-sulfur cluster). A cofactor stays bound and is not what a drug displaces. `pocket_cofactor_status` says which of two situations applies, because they are not the same problem:
+
+| status | meaning | targets | in the 125 | in the strict 52 |
+|--------|---------|--------:|-----------:|-----------------:|
+| `displaced` | a drug-like ligand is in some structure but the cofactor won the per-structure ranking | 60 | 6 | 2 |
+| `unverifiable` | no structure of the target holds a drug-like ligand at all | 27 | 5 | 1 |
+
+**The `displaced` pockets are wrong now and will move.** A release that rebuilds pockets will put them on the drug, so those are exactly the targets whose numbers change between releases. The `unverifiable` ones never will: there is nothing to move them to.
+
+Dropping all eleven leaves **114** and **49**. Report the 125, and quote the 114 alongside it if a reviewer would otherwise wonder.
+
+The flag does not fire where a cofactor site genuinely is the drug site. For cytochromes P450, the nitric oxide synthase oxygenase domain, aromatase and the peroxidases, inhibitors stack on the cofactor's distal face, and all 26 such accessions have a drug-bound structure, which puts them in `displaced` rather than `unverifiable`. What `unverifiable` catches is globins, electron-transfer cytochromes, and cases like DHODH whose drug site is a separate channel.
 
 ---
 
@@ -340,9 +353,10 @@ chembl-q-data/
 ├── external_pocket_best.tsv       # closest PDBbind/BioLiP pocket per target
 ├── external_pocket_hits.tsv       # every pair under the reported cutoff
 ├── train.txt / test.txt           # one line per active, with a sampling weight
-├── chembl_targets.tsv             # split, counts, and the external pocket match
+├── chembl_targets.tsv             # split, counts, the external pocket match,
+│                                 #   and the pocket-cofactor columns for all 1,506
 ├── benchmark/                     # the released evaluation set, see above
-│   ├── targets.tsv                #   425 rows, subset flags
+│   ├── targets.tsv                #   425 rows, subset flags, pocket columns
 │   ├── screen/{UniProt}.tsv       #   chembl_id, label, smiles, decoy_for
 │   └── README.md
 │
@@ -362,12 +376,15 @@ chembl-q-data/
     └── sequence.fasta
 ```
 
-`chembl_targets.tsv` gains two columns when stage 7 has run, and is omitted entirely when it has not — a 0.0 default would read as "identical to an external pocket":
+`chembl_targets.tsv` gains the two `ext_pocket_*` columns when stage 7 has run, and omits them entirely when it has not — a 0.0 default would read as "identical to an external pocket":
 
 ```
-uniprot  split  n_actives  n_decoys  ext_pocket_rmsd  ext_pocket_entry
-Q9Y5N1   test         409     12265            2.534  biolip.4qkx_35V_A_1
+uniprot  split  n_actives  n_decoys  ext_pocket_rmsd  ext_pocket_entry     pocket_ligand      pass_pocket_noncofactor  pocket_cofactor_status
+Q9Y5N1   test         409     12265            2.534  biolip.4qkx_35V_A_1  1IB;A1L;HSM;ITF    1
+Q02127   train        395     11825            0.723  biolip.5xfv_FMN_A_1  FMN                0                        unverifiable
 ```
+
+The three pocket columns are here as well as in `benchmark/targets.tsv`, and this is the file to filter on when assembling a training set: `benchmark/targets.tsv` covers the 425 test targets only, while 43 of the 60 `displaced` targets and 12 of the 27 `unverifiable` ones are in the **training** split. Add them to an existing release with `python tools/add_pocket_columns.py --data $DATA`, which derives them from `pocket_info.csv` and leaves every other column untouched.
 
 ---
 

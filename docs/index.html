@@ -523,7 +523,8 @@ a:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-
         <!-- TODO: fill in the archive DOI and link once uploaded -->
       </p>
     </div>
-<div class="text"><pre>benchmark/targets.tsv           <span class="c">425 rows: counts, pocket overlap, subset flags</span>
+<div class="text"><pre>benchmark/targets.tsv           <span class="c">425 rows: counts, pocket overlap, subset flags,</span>
+                                <span class="c">same-family decoys, the pocket's ligand</span>
 benchmark/screen/{UniProt}.tsv  <span class="c">chembl_id, label, smiles, decoy_for</span>
 
 <span class="c">label = active   | a binder, exact measurement at or below 10 uM</span>
@@ -579,6 +580,33 @@ strict                               52    3,343    98,305     22.5        2,443
         median is 0.67%, 43 are clean, the 90th percentile is 12.0%, and P56389 reaches
         42.1%. Q9Y6N5 is at 19.0% and is in the strict 52.
       </p>
+      <p class="note">
+        <code>pass_pocket_noncofactor</code> is the column to check before trusting a
+        per-target result. The premise of the dataset is that a target's actives bind
+        the pocket it defines, and for 11 of the 125 nothing in the data supports that:
+        every structure's pocket was taken from a tightly bound prosthetic group
+        (haem, FAD, FMN, PLP, TPP or an iron&ndash;sulfur cluster), and a cofactor stays
+        bound rather than being displaced by a drug.
+        <code>pocket_cofactor_status</code> separates two situations that are not the
+        same problem. <strong><code>displaced</code></strong> (60 targets, 6 of the 125,
+        2 of the strict 52) means a drug-like ligand sits in some structure of the
+        target but the cofactor won the per-structure ranking: those pockets are wrong
+        now and will move in a release that rebuilds them, so they are exactly the
+        targets whose numbers change between releases.
+        <strong><code>unverifiable</code></strong> (27 targets, 5 of the 125, 1 of the
+        strict 52) means no structure holds a drug-like ligand at all, so there is
+        nothing to move the pocket to and nothing to check it against. Dropping all
+        eleven leaves <strong>114</strong> and <strong>49</strong>.
+      </p>
+      <p class="note">
+        The flag does not fire where a cofactor site genuinely is the drug site. For
+        cytochromes P450, the nitric oxide synthase oxygenase domain, aromatase and the
+        peroxidases, inhibitors stack on the cofactor's distal face, and all 26 such
+        accessions have a drug-bound structure, which places them in
+        <code>displaced</code> rather than <code>unverifiable</code>. What
+        <code>unverifiable</code> catches is globins, electron-transfer cytochromes, and
+        cases like DHODH whose drug site is a separate channel.
+      </p>
     </div>
   </section>
 
@@ -603,7 +631,8 @@ bash run_full.sh
 <span class="c">#   test.txt      one line per active, with a sampling weight</span>
 <span class="c">#   {target}/decoys.tsv   up to 30 property-matched decoys per active</span>
 <span class="c">#   {target}/weak.tsv     binders above 10 uM, excluded from both labels</span>
-<span class="c">#   chembl_targets.tsv   split, counts, nearest PDBbind/BioLiP pocket</span></pre></div>
+<span class="c">#   chembl_targets.tsv   split, counts, nearest PDBbind/BioLiP pocket,</span>
+<span class="c">#                        and the pocket-cofactor columns for all 1,506</span></pre></div>
     <div class="text" style="margin-top:1.6rem">
       <p class="note">
         Rebuilding needs Python 3.10+, MMseqs2 on <code>PATH</code> and the ChEMBL SQLite release.
