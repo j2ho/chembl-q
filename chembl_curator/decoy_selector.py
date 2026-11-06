@@ -284,13 +284,16 @@ class DecoySelector:
                 stats['n_excl_sim'] += 1
                 continue
 
-            # A looser bar against every OTHER active of the target. The same
-            # 0.3 cannot be used here: it rejects 13.2% of what the pool can
-            # supply, and refilling that needs 202% of the spare capacity the
-            # reuse cap leaves, so the run would underfill instead. At 0.9 the
-            # cut is 0.01% of pairs and refill costs 0.2% of the spare, while
-            # still catching the case this exists for, a decoy that is the same
-            # molecule as a binder it was never paired with.
+            # The bar against the target's whole reference set: every active
+            # (not just the representatives), every same-pocket cocrystal
+            # ligand, every weak binder. The case it exists for is a decoy
+            # that is the same molecule as a binder it was never paired with.
+            #
+            # Looser than tanimoto_thresh on purpose. Measured against this
+            # reference on the previous build, 16.34% of assignments sat above
+            # 0.3 and refilling that needs twice the spare capacity the reuse
+            # cap leaves, so the run would underfill; 0.855% sat above 0.5,
+            # which refills.
             if target_fps and max(
                 DataStructs.BulkTanimotoSimilarity(cd['fp'], target_fps)
             ) > self.cross_active_thresh:
