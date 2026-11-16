@@ -7,9 +7,9 @@
 
 A pipeline that curates ChEMBL into a virtual screening benchmark, and a dataset built with it.
 
-Most released scoring models are trained on PDBbind or BioLiP and then scored on DUD-E, DEKOIS 2.0 or LIT-PCBA. Those benchmarks were assembled from targets that have crystal structures, which is the criterion that put the same targets in PDBbind and BioLiP, so the models are being scored on receptors they were trained on. Measured with this pipeline: **99–100% of DUD-E, DEKOIS 2.0 and LIT-PCBA targets have a sequence homologue in PDBbind + BioLiP, and 93–100% have a pocket within 1 Å, at a median distance of 0.00 Å.**
+Most released scoring models are trained on PDBbind or BioLiP and then scored on DUD-E, DEKOIS 2.0 or LIT-PCBA. Those benchmarks were assembled from targets that have crystal structures, which is the criterion that put the same targets in PDBbind and BioLiP, so the models are being scored on receptors they were trained on. Measured with this pipeline: **99–100% of DUD-E, DEKOIS 2.0 and LIT-PCBA targets have a sequence homolog in PDBbind + BioLiP, and 93–100% have a pocket within 1 Å, at a median distance of 0.00 Å.**
 
-ChEMBL-Q keeps the two apart. 1,081 targets are offered for training and they are the ones those sets already cover; 425 are held back as the benchmark, and none of them has a homologue in PDBbind, in BioLiP, or in the training split itself. Whatever a model was trained on, it can be scored here.
+ChEMBL-Q keeps the two apart. 1,081 targets are offered for training and they are the ones those sets already cover; 425 are held back as the benchmark, and none of them has a homolog in PDBbind, in BioLiP, or in the training split itself. Whatever a model was trained on, it can be scored here.
 
 Everything the pipeline measures ships with the data, including the overlap that remains.
 
@@ -30,7 +30,7 @@ test     425 targets    8,367 actives   median  2 per target
 
 The 282,829 is every active. The per-split counts are clustered representatives, 106,052 of them, which is what a decoy block is attached to.
 
-**What the test split guarantees.** No test target has a PDBbind or BioLiP homologue at 0.4 identity, none was built from a PDB entry those sets hold, and none is within 0.4 identity of a training sequence. Median distance from a test pocket to its closest external pocket is 2.01 Å, against 0.25 Å for train — a consequence of the sequence rules, since no split decision is made on geometry.
+**What the test split guarantees.** No test target has a PDBbind or BioLiP homolog at 0.4 identity, none was built from a PDB entry those sets hold, and none is within 0.4 identity of a training sequence. Median distance from a test pocket to its closest external pocket is 2.01 Å, against 0.25 Å for train — a consequence of the sequence rules, since no split decision is made on geometry.
 
 **What it does not guarantee.** The split is on targets, not compounds. 19.1% of test actives are also train actives and 31.1% share a Murcko scaffold with one. Run a ligand-only control before attributing performance to structure; the per-target `actives.tsv` files are there to build a compound-disjoint evaluation from if you need one.
 
@@ -40,7 +40,7 @@ Pocket novelty is reported, not enforced: 188 of the 380 test targets with an ex
 
 ## What to score on
 
-The dataset ships as a tarball (**upload it and put the DOI here** — the archive is ~22 MB for `benchmark/` alone, ~49 GB with the structures, so the two are worth publishing separately). `benchmark/` is the part you need to evaluate a model: a labelled screening list per target, with SMILES, so nothing has to be reconstructed and `compound_pool.pkl` never has to be opened.
+The dataset ships as a tarball (**upload it and put the DOI here** — the archive is ~22 MB for `benchmark/` alone, ~49 GB with the structures, so the two are worth publishing separately). `benchmark/` is the part you need to evaluate a model: a labeled screening list per target, with SMILES, so nothing has to be reconstructed and `compound_pool.pkl` never has to be opened.
 
 ```
 benchmark/targets.tsv           425 rows: counts, pocket overlap, subset flags,
@@ -61,15 +61,15 @@ label = active   a binder, exact measurement at or below 10 µM
 | + no pocket within 1 Å      |      97 |   6,120 | 180,932 |             17 | 3,260 (1.8%) |
 | strict (`pass_strict_2A`)   |      52 |   3,343 |  98,305 |           22.5 | 2,443 (2.5%) |
 
-The strict set drops every target whose pocket comes within 2 Å of a PDBbind or BioLiP one, and then asks for five actives whose Murcko scaffold appears nowhere in the training split. Note what that second condition is and is not: it filters *targets*, not actives, so the 3,343 actives of those 52 targets include 509 whose scaffold a model may have seen. Report the primary set; use the strict set to show a result is not an artefact of the overlap that remains.
+The strict set drops every target whose pocket comes within 2 Å of a PDBbind or BioLiP one, and then asks for five actives whose Murcko scaffold appears nowhere in the training split. Note what that second condition is and is not: it filters *targets*, not actives, so the 3,343 actives of those 52 targets include 509 whose scaffold a model may have seen. Report the primary set; use the strict set to show a result is not an artifact of the overlap that remains.
 
 Four things the table does not say. Decoys and measured inactives are different claims and should not be pooled — a decoy is an assumption, an inactive is a measurement, and there are 7,320 of the latter against 247,213 decoy assignments.
 
-`n_actives_organic_only` counts the actives a conventional featuriser can read: two targets (P0A9P4, P36776) are almost entirely selenium or boronic-acid chemistry, which MMFF94 has no parameters for. They are recorded rather than removed, because which elements a model can read is the model's property, not the target's.
+`n_actives_organic_only` counts the actives a conventional featurizer can read: two targets (P0A9P4, P36776) are almost entirely selenium or boronic-acid chemistry, which MMFF94 has no parameters for. They are recorded rather than removed, because which elements a model can read is the model's property, not the target's.
 
 `n_decoys_same_family` is the honest caveat. A decoy is an active of a receptor dissimilar to this one by sequence identity and pocket RMSD, but 2.0% of assignments are still a documented active of a target sharing this one's full ChEMBL protein classification path. Neither bar can reach them: 97.75% already have a usable pocket RMSD, so it is not a coverage gap, and 85% survive relaxing sequence identity to 0.4 **and** pocket RMSD to 3.0 Å. The column is reported rather than filtered, and the per-target spread is what matters far more than the average. Across the 425 the median target is at **0%** and 240 of them are exactly zero; the mean is 2.8% because a handful are badly affected. Within the scoring set of 125: median 0.67%, 43 targets clean, 90th percentile 12.0%, and P56389 at 42.1%. Q9Y6N5 sits at 19.0% and is in the strict 52. So a per-target number worth leaning on should be read against that target's own figure, never against the 2.0% aggregate.
 
-`pass_pocket_noncofactor` is the one to check before trusting a per-target result. The dataset's premise is that a target's actives bind the pocket it defines, and for 11 of the 125 nothing in the data supports that: every structure's pocket was taken from a tightly bound prosthetic group (haem, FAD, FMN, PLP, TPP or an iron-sulfur cluster). A cofactor stays bound and is not what a drug displaces. `pocket_cofactor_status` says which of two situations applies, because they are not the same problem:
+`pass_pocket_noncofactor` is the one to check before trusting a per-target result. The dataset's premise is that a target's actives bind the pocket it defines, and for 11 of the 125 nothing in the data supports that: every structure's pocket was taken from a tightly bound prosthetic group (heme, FAD, FMN, PLP, TPP or an iron-sulfur cluster). A cofactor stays bound and is not what a drug displaces. `pocket_cofactor_status` says which of two situations applies, because they are not the same problem:
 
 | status | meaning | targets | in the 125 | in the strict 52 |
 |--------|---------|--------:|-----------:|-----------------:|
@@ -154,7 +154,7 @@ Rough timings at 32 cores: stage 1 ~30 min, stage 2 ~3 h with a warm structure c
 
 Pulls actives, measured inactives and the full tested list out of ChEMBL.
 
-Labelling is by relation, not by threshold alone. An exact measurement (`=`, `<=`) at or below 10 µM is an active. A censored `>` record is non-binding evidence and its strength is the concentration tested, so `>` at or above 100 µM is an inactive. When a compound has both, the conflict is settled by potency rather than by counting records: a compound measured at 0.34 nM across 75 assays stays active despite one depositor calling it inactive, and is tagged contested.
+Labeling is by relation, not by threshold alone. An exact measurement (`=`, `<=`) at or below 10 µM is an active. A censored `>` record is non-binding evidence and its strength is the concentration tested, so `>` at or above 100 µM is an inactive. When a compound has both, the conflict is settled by potency rather than by counting records: a compound measured at 0.34 nM across 75 assays stays active despite one depositor calling it inactive, and is tagged contested.
 
 Requiring `pchembl_value >= 5` means only `=` records survive in practice — ChEMBL does not assign a pChEMBL to censored rows.
 
@@ -285,10 +285,10 @@ Property windows: ±50 Da MW, ±2 cLogP, ±50 Å² TPSA, ±2 HBD, ±2 HBA, ±1 a
 Each member is there for a reason the others do not cover:
 
 - **All actives, not the representatives.** A decoy for active A was free to be the same molecule as active B, since `measured.tsv` catches that only when the compound happens to have been tested there. Comparing against representatives alone let 94 assignments reach 1.0 similarity to a non-representative active of the very target they were a decoy for.
-- **Cocrystal ligands.** They have no ChEMBL id, so no id-based exclusion can see them, yet a solved structure puts the molecule in the pocket. 14 assignments were the same molecule as a cocrystal ligand of their own target. Where several PDB entries have a ligand in that pocket, all of them count; a second ligand elsewhere in the same entry does not, bounded at 10 Å from the pocket centre.
+- **Cocrystal ligands.** They have no ChEMBL id, so no id-based exclusion can see them, yet a solved structure puts the molecule in the pocket. 14 assignments were the same molecule as a cocrystal ligand of their own target. Where several PDB entries have a ligand in that pocket, all of them count; a second ligand elsewhere in the same entry does not, bounded at 10 Å from the pocket center.
 - **Weak binders.** Activity was observed, just above the active cut. A weak binder is still a binder.
 
-Measured **inactives** are deliberately absent. They are confirmed non-binders, so resembling one is a point in a decoy's favour; excluding on it would invert the rule. They stay excluded by ChEMBL id through `measured.tsv`.
+Measured **inactives** are deliberately absent. They are confirmed non-binders, so resembling one is a point in a decoy's favor; excluding on it would invert the rule. They stay excluded by ChEMBL id through `measured.tsv`.
 
 The bars cannot both be 0.3: the pool is close to saturated — demand runs at 95.8% of what the reuse cap allows — and refilling a 0.3 cut needs twice the spare capacity, so the run would underfill rather than substitute. 0.5 is affordable, and the fingerprint is built without chirality, so a stereoisomer of a known binder scores 1.0 and is caught. Against the previous 0.9-on-representatives rule this removes 26,856 assignments (0.855%), of which 3,033 were above 0.7; underfill moved from 2,083 actives to 2,086.
 
@@ -312,7 +312,7 @@ chembl-curator pocket-leakage --data-dir $DATA --cache external_pockets.npz --wo
 
 `external_pockets.npz` is in the repository, so `pocket-leakage` runs without PDBbind or BioLiP on disk.
 
-**The result is reported, not filtered.** Cutting the test set on pocket RMSD removes the data-rich targets: a 1.0 Å cut takes 14% of the test targets but 22% of the actives, because a fold that has been drugged hard is also one those sets hold many structures of. 188 test targets sit within 2 Å of an external pocket and not one of them is the same protein, by construction — the split already guarantees no test target has a homologue at 0.4 identity, so every one of these is a geometric match between unrelated sequences. Stage 8 carries the number into `chembl_targets.tsv` so a benchmark can be scored overall and on a pocket-novel subset.
+**The result is reported, not filtered.** Cutting the test set on pocket RMSD removes the data-rich targets: a 1.0 Å cut takes 14% of the test targets but 22% of the actives, because a fold that has been drugged hard is also one those sets hold many structures of. 188 test targets sit within 2 Å of an external pocket and not one of them is the same protein, by construction — the split already guarantees no test target has a homolog at 0.4 identity, so every one of these is a geometric match between unrelated sequences. Stage 8 carries the number into `chembl_targets.tsv` so a benchmark can be scored overall and on a pocket-novel subset.
 
 ### Stage 8: `split`
 
@@ -324,7 +324,7 @@ chembl-curator split --data-dir $DATA --external-fasta my.fa # your own referenc
 
 A target is kept out of the test set if any of three rules fires. All three are sequence or identifier rules; pocket geometry is never used to decide a split.
 
-1. **Sequence homology**, 978 targets. An external entry aligns at 0.4 identity or better over at least 80% of that external sequence. Coverage is measured on the external side because what gets crystallised is a domain while a ChEMBL target is a whole UniProt entry; measuring over the query let 120 targets into the test set with their own PDB entry sitting in BioLiP.
+1. **Sequence homology**, 978 targets. An external entry aligns at 0.4 identity or better over at least 80% of that external sequence. Coverage is measured on the external side because what gets crystallized is a domain while a ChEMBL target is a whole UniProt entry; measuring over the query let 120 targets into the test set with their own PDB entry sitting in BioLiP.
 2. **Shared structure**, 680 targets. The target was built from a PDB entry those sets hold. Alignment cannot be relied on here: MMseqs2 finds only a 31-residue alignment between IGF2R's 2,491 residues and its 182-residue PDBbind construct.
 3. **Proximity to train**, 3 targets. Iterated to a fixed point.
 
@@ -369,7 +369,7 @@ chembl-q-data/
     ├── measured.tsv               # every compound tested here, whatever the label;
     │                              #   none of these can be this target's decoy
     ├── decoys.tsv                 # active_chembl_id -> decoy_ids (;-separated)
-    ├── pocket_info.csv            # structure, chain, ligand code AND residue, centre
+    ├── pocket_info.csv            # structure, chain, ligand code AND residue, center
     ├── aligned/                   # superposed chain PDBs
     ├── pdb/                       # downloaded structures
     ├── pdbid.list
